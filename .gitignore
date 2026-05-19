@@ -1,0 +1,50 @@
+# Synapse — .gitignore
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+
+# Core ML model (too large for git — documented in README)
+models/*.mlpackage
+models/*.mlmodel
+
+# Data files (generated at runtime)
+data/synapse.index
+data/synapse.db
+
+# Unix socket
+/tmp/synapse.sock
+
+# macOS
+.DS_Store
+*.localized
+
+# Xcode
+*.xcuserstate
+xcuserdata/
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.pbxproj.orig
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Benchmarks / temp output
+*.csv
+*.log
+plots/
+
+# SQLite WAL/SHM (runtime)
+data/*.db-shm
+data/*.db-wal
+data/*.bak
+
+# iCloud duplicate files ("foo 2.ext")
+* 2.*
