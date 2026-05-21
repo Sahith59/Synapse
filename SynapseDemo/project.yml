@@ -1,0 +1,16 @@
+name: SynapseDemo
+options:
+  bundleIdPrefix: com.synapse
+targets:
+  SynapseDemo:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: SynapseDemo
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        ENABLE_PREVIEWS: YES
+        SWIFT_VERSION: 5.0
+        CODE_SIGN_IDENTITY: "-"
