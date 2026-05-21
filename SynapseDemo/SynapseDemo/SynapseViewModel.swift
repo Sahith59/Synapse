@@ -1,0 +1,391 @@
+import SwiftUI
+
+@MainActor
+class SynapseViewModel: ObservableObject {
+
+    // MARK: - Intelligence tab
+
+    @Published var queryText: String = ""
+    @Published var isQuerying: Bool = false
+    @Published var isGenerating: Bool = false
+    @Published var ragAnswer: String = ""
+    @Published var results: [ResultItem] = []
+    @Published var queryLatencyMs: Double = 0
+    @Published var synthesisMs: Double = 0
+
+    // MARK: - Observer (live context)
+
+    @Published var activeContext: ResultItem?
+    @Published var justCaptured: Bool = false   // brief pulse when new content lands
+    private var liveContextTask: Task<Void, Never>?
+
+    // MARK: - Daemon status
+
+    @Published var daemonRunning: Bool = false
+    @Published var totalSnippets: Int = 0
+
+    // MARK: - Memory tab
+
+    @Published var memoryNodes: [MemoryNode] = []
+    @Published var isLoadingMemory: Bool = false
+
+    // MARK: - Insights (stats, digest)
+
+    @Published var stats: DaemonStats = DaemonStats()
+    @Published var digestText: String = ""
+    @Published var isDigesting: Bool = false
+
+    // MARK: - Models
+
+    struct ResultItem: Identifiable {
+        let id: Int
+        let text: String
+        let source: String
+        let similarity: Double
+        let relevance: Int       // calibrated 0-100 relevance for display
+        let timestamp: Double
+        var tags: [String] = []
+    }
+
+    struct MemoryNode: Identifiable {
+        let id: Int
+        let text: String
+        let source: String
+        let timestamp: Double
+        var tags: [String] = []
+    }
+
+    struct DaemonStats {
+        var vectors: Int = 0
+        var p50: Double = 0
+        var p95: Double = 0
+        var indexBytes: Int = 0
+        var dim: Int = 384
+    }
+
+    // MARK: - Display text cleanup
+    //
+    // Captured text often carries raw noise: asterisk banners (**** TITLE *****),
+    // bare URLs, repeated punctuation, and collapsed whitespace. This produces a
+    // clean, human-readable string for display without touching what's stored.
+
+    static func prettify(_ raw: String) -> String {
+        var t = raw
+
+        // Drop standalone URL lines (e.g. "URL: https://…") — keep prose, not links
+        t = t.replacingOccurrences(
+            of: #"(?m)^\s*URL:\s*\S+\s*$"#,
+            with: "", options: .regularExpression)
+        t = t.replacingOccurrences(
+            of: #"https?://\S+"#,
+            with: "", options: .regularExpression)
+
+        // Turn asterisk/underscore/equals banners into a clean Title Case heading:
+        // "**** JUSTIFICATION *****" -> "Justification"
+        t = t.replacingOccurrences(
+            of: #"(?m)^[\s*_=\-]*([A-Za-z][A-Za-z0-9 ’'/&-]{1,60}?)[\s*_=\-]*$"#,
+            with: "$1", options: .regularExpression)
+
+        // Strip any leftover runs of *, _, =, ~ used as decoration
+        t = t.replacingOccurrences(
+            of: #"[*_=~]{2,}"#, with: "", options: .regularExpression)
+
+        // Collapse 3+ newlines to a paragraph break, trim trailing spaces per line
+        t = t.replacingOccurrences(
+            of: #"[ \t]+(?=\n)"#, with: "", options: .regularExpression)
+        t = t.replacingOccurrences(
+            of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+
+        // Collapse runs of spaces
+        t = t.replacingOccurrences(
+            of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
+
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - Source icons
+
+    static func sourceIconStatic(_ source: String) -> String {
+        switch source.lowercased() {
+        case "notes":      return "note.text"
+        case "calendar":   return "calendar"
+        case "reminders":  return "checklist"
+        case "safari":     return "safari"
+        case "chrome":     return "safari"
+        case "contacts":   return "person.crop.circle"
+        case "fitness":    return "figure.run"
+        case "mail":       return "envelope"
+        case "messages":   return "message"
+        case "pages":      return "doc.richtext"
+        case "word":       return "doc.richtext"
+        case "excel":      return "tablecells"
+        case "electron":   return "laptopcomputer"
+        case "terminal":   return "terminal"
+        case "xcode":      return "hammer"
+        default:           return "app"
+        }
+    }
+
+    // MARK: - Daemon check
+
+    func checkDaemon() async {
+        let (running, count) = await rawPingAndCount()
+        withAnimation { daemonRunning = running; totalSnippets = count }
+    }
+
+    // MARK: - Live context streaming
+
+    func startLiveContextStreaming() {
+        liveContextTask?.cancel()
+        liveContextTask = Task {
+            while !Task.isCancelled {
+                if let latest = await rawLatest() {
+                    if activeContext?.id != latest.id {
+                        await MainActor.run {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                activeContext = latest
+                            }
+                            // Flash the "just captured" pulse so the user can see
+                            // the observer is alive and working.
+                            justCaptured = true
+                        }
+                        try? await Task.sleep(nanoseconds: 1_200_000_000)
+                        await MainActor.run { withAnimation { justCaptured = false } }
+                    }
+                }
+                // Keep the live memory count fresh so it visibly climbs as the
+                // observer stores new content — the main signal that capture works.
+                let (running, count) = await rawPingAndCount()
+                await MainActor.run {
+                    if daemonRunning != running { withAnimation { daemonRunning = running } }
+                    if totalSnippets != count { withAnimation { totalSnippets = count } }
+                }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
+    }
+
+    func stopLiveContextStreaming() {
+        liveContextTask?.cancel()
+        liveContextTask = nil
+    }
+
+    // MARK: - Query + RAG
+
+    func query() async {
+        guard !queryText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        withAnimation { isQuerying = true; isGenerating = true; results = []; ragAnswer = "" }
+
+        let t0 = Date()
+        let hits = await rawQuery(intent: queryText, topK: 8)
+        let elapsed = Date().timeIntervalSince(t0) * 1000
+
+        withAnimation(.easeOut(duration: 0.2)) {
+            queryLatencyMs = elapsed
+            results = hits
+            isQuerying = false
+        }
+
+        // RAG synthesis runs separately with a long timeout
+        let synthStart = Date()
+        let answer = await rawAsk(query: queryText, topK: 3)
+        let synthMs = Date().timeIntervalSince(synthStart) * 1000
+        withAnimation(.easeOut(duration: 0.25)) {
+            synthesisMs = synthMs
+            // Fall back to a clear message rather than a blank card on failure
+            if let a = answer, !a.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ragAnswer = SynapseViewModel.prettify(a)
+            } else if results.isEmpty {
+                ragAnswer = "I don't have any memories matching that yet."
+            } else {
+                ragAnswer = "I found related memories below, but couldn't synthesize a summary."
+            }
+            isGenerating = false
+        }
+    }
+
+    // MARK: - Delete
+
+    func delete(id: Int) async {
+        guard let data = await rawSend(json: ["action": "delete", "id": id]),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["ok"] as? Bool == true else { return }
+        withAnimation {
+            results.removeAll { $0.id == id }
+            memoryNodes.removeAll { $0.id == id }
+            totalSnippets = max(0, totalSnippets - 1)
+        }
+    }
+
+    // MARK: - Memory tab
+
+    func loadMemory() async {
+        withAnimation { isLoadingMemory = true }
+        guard let data = await rawSend(json: ["action": "list", "limit": 300]),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["ok"] as? Bool == true,
+              let items = json["items"] as? [[String: Any]] else {
+            withAnimation { isLoadingMemory = false }
+            return
+        }
+
+        let nodes: [MemoryNode] = items.compactMap { item in
+            guard let id  = item["id"]        as? Int,
+                  let txt = item["text"]      as? String,
+                  let src = item["source"]    as? String,
+                  let ts  = item["timestamp"] as? Double else { return nil }
+            let tags = item["tags"] as? [String] ?? []
+            return MemoryNode(id: id, text: txt, source: src, timestamp: ts, tags: tags)
+        }
+
+        withAnimation {
+            memoryNodes = nodes
+            if let total = json["total"] as? Int { totalSnippets = total }
+            isLoadingMemory = false
+        }
+    }
+
+    // MARK: - Insights
+
+    func fetchStats() async {
+        guard let d = await rawSend(json: ["action": "stats"]),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              j["ok"] as? Bool == true else { return }
+        withAnimation {
+            stats = DaemonStats(
+                vectors:    j["faiss_vectors"] as? Int ?? 0,
+                p50:        j["embed_p50_ms"] as? Double ?? 0,
+                p95:        j["embed_p95_ms"] as? Double ?? 0,
+                indexBytes: j["index_bytes"] as? Int ?? 0,
+                dim:        j["embed_dim"] as? Int ?? 384)
+        }
+    }
+
+    func runDigest() async {
+        withAnimation { isDigesting = true; digestText = "" }
+        let d = await rawSend(json: ["action": "digest", "hours": 24], timeout: 120)
+        var text = "Couldn't generate a digest right now."
+        if let d, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+           j["ok"] as? Bool == true, let s = j["digest"] as? String {
+            text = SynapseViewModel.prettify(s)
+        }
+        withAnimation { digestText = text; isDigesting = false }
+    }
+
+    func relatedMemories(for id: Int) async -> [ResultItem] {
+        guard let d = await rawSend(json: ["action": "related", "id": id, "top_k": 4]),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              j["ok"] as? Bool == true,
+              let arr = j["results"] as? [[String: Any]] else { return [] }
+        return arr.compactMap {
+            guard let rid = $0["id"] as? Int, let tx = $0["text"] as? String,
+                  let src = $0["source"] as? String, let ts = $0["timestamp"] as? Double
+            else { return nil }
+            let rel = $0["relevance"] as? Int ?? 0
+            return ResultItem(id: rid, text: tx, source: src, similarity: 0,
+                              relevance: rel, timestamp: ts,
+                              tags: $0["tags"] as? [String] ?? [])
+        }
+    }
+
+    // MARK: - Raw socket transport
+
+    /// Send a JSON request over /tmp/synapse.sock and return the raw response Data.
+    /// - Parameter timeout: seconds. Use 120 for LLM calls.
+    func rawSend(json payload: [String: Any], timeout: Int = 10) async -> Data? {
+        await Task.detached {
+            guard let body = try? JSONSerialization.data(withJSONObject: payload),
+                  var msg = String(data: body, encoding: .utf8) else { return nil }
+            msg += "\n"
+
+            let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+            guard fd >= 0 else { return nil }
+            defer { close(fd) }
+
+            var tv = timeval(tv_sec: timeout, tv_usec: 0)
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+            setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
+            var addr = sockaddr_un()
+            addr.sun_family = sa_family_t(AF_UNIX)
+            let pathBytes = Array("/tmp/synapse.sock".utf8)
+            withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+                ptr.withMemoryRebound(to: CChar.self, capacity: pathBytes.count + 1) { cstr in
+                    for (i, b) in pathBytes.enumerated() { cstr[i] = CChar(bitPattern: b) }
+                    cstr[pathBytes.count] = 0
+                }
+            }
+
+            let connected = withUnsafePointer(to: &addr) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                }
+            }
+            guard connected == 0 else { return nil }
+
+            let msgData = msg.data(using: .utf8)!
+            _ = msgData.withUnsafeBytes { send(fd, $0.baseAddress!, msgData.count, 0) }
+
+            var resp = Data()
+            var buf  = [UInt8](repeating: 0, count: 8192)
+            while true {
+                let n = recv(fd, &buf, buf.count, 0)
+                if n <= 0 { break }
+                resp.append(contentsOf: buf[0..<n])
+                if buf[0..<n].contains(0x0A) { break }
+            }
+            return resp.isEmpty ? nil : resp
+        }.value
+    }
+
+    // MARK: - Private helpers
+
+    private func rawPingAndCount() async -> (Bool, Int) {
+        guard let d = await rawSend(json: ["action": "ping"]),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              j["ok"] as? Bool == true else { return (false, 0) }
+        if let cd = await rawSend(json: ["action": "count"]),
+           let cj = try? JSONSerialization.jsonObject(with: cd) as? [String: Any],
+           let n  = cj["active_snippets"] as? Int { return (true, n) }
+        return (true, 0)
+    }
+
+    private func rawLatest() async -> ResultItem? {
+        guard let d  = await rawSend(json: ["action": "latest"]),
+              let j  = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              j["ok"] as? Bool == true,
+              let lt = j["latest"] as? [String: Any],
+              let id = lt["id"]        as? Int,
+              let tx = lt["text"]      as? String,
+              let sr = lt["source"]    as? String,
+              let ts = lt["timestamp"] as? Double else { return nil }
+        return ResultItem(id: id, text: tx, source: sr, similarity: 1.0, relevance: 100, timestamp: ts)
+    }
+
+    private func rawQuery(intent: String, topK: Int) async -> [ResultItem] {
+        guard let d   = await rawSend(json: ["action": "query", "intent": intent, "top_k": topK]),
+              let j   = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              j["ok"] as? Bool == true,
+              let arr = j["results"] as? [[String: Any]] else { return [] }
+        return arr.compactMap {
+            guard let id  = $0["id"]         as? Int,
+                  let tx  = $0["text"]       as? String,
+                  let src = $0["source"]     as? String,
+                  let sim = $0["similarity"] as? Double,
+                  let ts  = $0["timestamp"]  as? Double else { return nil }
+            let rel = $0["relevance"] as? Int ?? Int(sim * 100)
+            return ResultItem(id: id, text: tx, source: src, similarity: sim,
+                              relevance: rel, timestamp: ts,
+                              tags: $0["tags"] as? [String] ?? [])
+        }
+    }
+
+    private func rawAsk(query: String, topK: Int) async -> String? {
+        // LLM can take 30-90 s to load + generate on first call; use a 120 s timeout.
+        guard let d   = await rawSend(json: ["action": "ask", "query": query, "top_k": topK], timeout: 120),
+              let j   = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              j["ok"] as? Bool == true,
+              let ans = j["answer"] as? String else { return nil }
+        return ans
+    }
+}
