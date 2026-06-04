@@ -142,6 +142,19 @@ class SynapseServer:
             if not text:
                 return {"ok": False, "error": "text is required for store"}
             result = self._embed(text)
+
+            # Server-side semantic dedup: if an almost-identical memory already
+            # exists (cosine >= 0.97), don't store a near-duplicate. This guards
+            # against the observer's in-memory cache resetting on restart.
+            existing = self._store.search(result.vector, top_k=1)
+            if existing and existing[0].similarity >= 0.97:
+                return {
+                    "ok": True,
+                    "id": existing[0].id,
+                    "duplicate": True,
+                    "latency_ms": round(result.latency_ms, 2),
+                }
+
             vid = self._store.add(text, result.vector, source)
             return {"ok": True, "id": vid, "latency_ms": round(result.latency_ms, 2)}
 

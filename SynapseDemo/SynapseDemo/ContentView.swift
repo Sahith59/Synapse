@@ -185,7 +185,7 @@ private struct Sidebar: View {
                         .fill(vm.daemonRunning ? Color.green : Color.red)
                         .frame(width: 7, height: 7)
                         .shadow(color: vm.daemonRunning ? .green.opacity(0.5) : .red.opacity(0.4), radius: 4)
-                    Text(vm.daemonRunning ? "ANE Active" : "Daemon Offline")
+                    Text(vm.daemonRunning ? "Daemon Active" : "Daemon Offline")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -309,7 +309,7 @@ struct ObserverPane: View {
                             .foregroundStyle(.tertiary).kerning(0.9)
                         ForEach([
                             ("eye",                 "Reads active macOS window via Accessibility APIs"),
-                            ("cpu.fill",            "Core ML INT4 model — sub-1ms embed on ANE"),
+                            ("cpu.fill",            "MiniLM embeddings in PyTorch — ~2ms per query"),
                             ("cylinder.split.1x2",  "FAISS IndexIDMap + SQLite WAL"),
                             ("lock.shield.fill",    "Zero network calls — 100% private"),
                         ], id: \.0) { icon, text in
@@ -453,6 +453,12 @@ struct QueryPane: View {
                                 .font(.system(size: 15))
                                 .focused($focused)
                                 .onSubmit { Task { await vm.query() } }
+                                .onAppear {
+                                    // Grab keyboard focus so the user can type immediately
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                        focused = true
+                                    }
+                                }
 
                             if !vm.queryText.isEmpty {
                                 Button {
@@ -463,6 +469,8 @@ struct QueryPane: View {
                                 }.buttonStyle(.plain)
                             }
                         }
+                        .contentShape(Rectangle())
+                        .onTapGesture { focused = true }
 
                         // Search CTA
                         Button { Task { await vm.query() } } label: {
@@ -597,7 +605,7 @@ struct SynthesisCard: View {
                         SkeletonLines()
                         HStack(spacing: 5) {
                             Image(systemName: "cpu.fill").font(.system(size: 9)).foregroundStyle(.secondary)
-                            Text("Phi-3 mini · 4-bit quantized · Apple Neural Engine")
+                            Text("Phi-3 mini · 4-bit quantized · Apple MLX")
                                 .font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary)
                         }
                     }

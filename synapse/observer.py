@@ -16,8 +16,6 @@ import socket
 import subprocess
 import time
 
-OCR_AVAILABLE = False  # OCR disabled in daemon thread — fork-unsafe with FAISS/CoreML loaded
-
 SOCKET_PATH    = "/tmp/synapse.sock"
 POLL_INTERVAL  = 3.0   # seconds between polls
 MIN_CHARS      = 30    # minimum content length worth storing
@@ -104,15 +102,23 @@ else if frontAppName is "Google Chrome" then
 else if frontAppName is "Notes" then
     tell application "Notes"
         try
-            if (count of notes) > 0 then
-                set n to note 1 of folder "Notes" of default account
-                set rawBody to body of n
-                set cleanBody to do shell script "echo " & quoted form of rawBody & ¬
-                    " | sed -e 's/<[^>]*>//g' -e '/^[[:space:]]*$/d'"
-                return "notes | " & name of n & return & cleanBody
+            -- Prefer the note currently selected/open, not just note 1
+            set targetNote to missing value
+            try
+                set sel to selection
+                if (count of sel) > 0 then set targetNote to item 1 of sel
+            end try
+            if targetNote is missing value then
+                if (count of notes) > 0 then set targetNote to note 1
             end if
-        on error
-            return "notes | (Could not read note)"
+            if targetNote is not missing value then
+                set rawBody to body of targetNote
+                set cleanBody to do shell script "echo " & quoted form of rawBody & ¬
+                    " | sed -e 's/<[^>]*>//g' -e 's/&nbsp;/ /g' -e 's/&amp;/\\&/g' -e '/^[[:space:]]*$/d'"
+                return "notes | " & name of targetNote & return & cleanBody
+            end if
+        on error errMsg
+            return "notes | (Could not read note: " & errMsg & ")"
         end try
     end tell
     return "notes | (No notes found)"
@@ -349,6 +355,34 @@ end if
 """
 
 
+# Canonical, display-friendly source names. Keeps the store consistent so the
+# UI never shows both "chrome" and "Chrome", and dedup treats them as one app.
+_SOURCE_ALIASES = {
+    "google chrome": "Chrome", "chrome": "Chrome",
+    "safari": "Safari",
+    "notes": "Notes",
+    "mail": "Mail",
+    "pages": "Pages",
+    "microsoft word": "Word", "word": "Word",
+    "terminal": "Terminal", "iterm2": "Terminal", "iterm": "Terminal",
+    "xcode": "Xcode",
+    "code": "VS Code", "visual studio code": "VS Code",
+    "cursor": "Cursor",
+    "slack": "Slack", "discord": "Discord", "notion": "Notion",
+    "figma": "Figma", "linear": "Linear", "arc": "Arc",
+    "electron": "App",
+}
+
+
+def _normalize_source(raw: str) -> str:
+    """Map a raw app/source token to a stable, title-cased canonical name."""
+    key = raw.strip().lower()
+    if key in _SOURCE_ALIASES:
+        return _SOURCE_ALIASES[key]
+    # Unknown app: title-case it so "activity monitor" -> "Activity Monitor"
+    return raw.strip().title() if raw.strip() else "Unknown"
+
+
 def _clean_text(raw: str) -> str:
     """Normalise whitespace, deduplicate adjacent lines, drop junk short lines."""
     lines = raw.splitlines()
@@ -369,25 +403,48 @@ def _clean_text(raw: str) -> str:
 
 
 class Observer:
-    _CACHE_SIZE = 50  # unique snapshots to remember for dedup
+    _CACHE_SIZE = 80        # recent snapshots remembered for dedup
+    _SIM_THRESHOLD = 0.90   # Jaccard overlap above this == duplicate
 
     def __init__(self):
-        self._seen_hashes: list[str] = []
+        # Each entry: (exact_hash, token_set) for the last N stored snapshots
+        self._seen: list[tuple[str, frozenset]] = []
 
-    def _content_hash(self, text: str) -> str:
-        normalised = text.strip().lower()[:1000]
-        return hashlib.md5(normalised.encode()).hexdigest()[:16]
+    @staticmethod
+    def _normalize(text: str) -> str:
+        """Lowercase, strip digits/punctuation noise so trivial changes collapse."""
+        t = text.lower()
+        return re.sub(r"[^a-z\s]+", " ", t)
+
+    def _exact_hash(self, text: str) -> str:
+        return hashlib.md5(self._normalize(text).encode()).hexdigest()[:16]
+
+    @staticmethod
+    def _token_set(text: str) -> frozenset:
+        return frozenset(w for w in Observer._normalize(text).split() if len(w) > 2)
 
     def _is_duplicate(self, text: str) -> bool:
-        return self._content_hash(text) in self._seen_hashes
+        """True if exactly seen, or >90% token-overlap with a recent snapshot."""
+        h = self._exact_hash(text)
+        tokens = self._token_set(text)
+        if not tokens:
+            return False
+        for seen_hash, seen_tokens in self._seen:
+            if seen_hash == h:
+                return True
+            if not seen_tokens:
+                continue
+            inter = len(tokens & seen_tokens)
+            union = len(tokens | seen_tokens)
+            if union and (inter / union) >= self._SIM_THRESHOLD:
+                return True
+        return False
 
     def _mark_seen(self, text: str):
-        h = self._content_hash(text)
-        if h in self._seen_hashes:
-            return
-        self._seen_hashes.append(h)
-        if len(self._seen_hashes) > self._CACHE_SIZE:
-            self._seen_hashes.pop(0)
+        entry = (self._exact_hash(text), self._token_set(text))
+        self._seen.append(entry)
+        if len(self._seen) > self._CACHE_SIZE:
+            self._seen.pop(0)
 
     def run_applescript(self) -> str:
         try:
@@ -430,33 +487,6 @@ class Observer:
             if fd:
                 fd.close()
 
-    # Apps where AppleScript returns deep native content (no OCR needed)
-    _NATIVE_DEEP = {"safari", "chrome", "notes", "mail", "pages", "word",
-                    "terminal", "xcode"}
-
-    # Electron-shell apps: their OS window owner is "Electron"
-    _ELECTRON_APPS = {
-        "cursor", "visual studio code", "slack", "discord",
-        "notion", "figma", "linear", "arc",
-    }
-
-    def _ocr_subprocess(self, proc_name: str) -> str:
-        """Run OCR in a child process — Vision Framework is not thread-safe."""
-        import sys
-        import os
-        python = sys.executable
-        ocr_script = os.path.join(os.path.dirname(__file__), "ocr.py")
-        proj_root = os.path.dirname(os.path.dirname(__file__))
-        try:
-            r = subprocess.run(
-                [python, ocr_script, proc_name],
-                capture_output=True, text=True, timeout=12,
-                cwd=proj_root,
-            )
-            return r.stdout.strip()
-        except Exception:
-            return ""
-
     def _wait_for_socket(self, timeout: float = 60.0):
         """Block until the Synapse socket exists (server has started)."""
         import os
@@ -469,7 +499,7 @@ class Observer:
         return False
 
     def start(self):
-        print("[Observer] Starting — tiered AX + OCR extraction", flush=True)
+        print("[Observer] Starting — tiered native + Accessibility extraction", flush=True)
 
         # Wait for server socket before first poll — observer thread starts
         # before server.start() creates the socket.
@@ -484,17 +514,13 @@ class Observer:
                 continue
 
             source, content = raw.split(" | ", 1)
-            source = source.strip().lower()
+            source = _normalize_source(source)
 
-            # OCR augmentation: spawn a child process so Vision Framework
-            # doesn't corrupt the daemon (PyObjC/Vision is not thread-safe).
-            if source not in self._NATIVE_DEEP:
-                proc_name = "Electron" if source in self._ELECTRON_APPS else source.title()
-                ocr_text = self._ocr_subprocess(proc_name)
-                if not ocr_text or len(ocr_text) < 20:
-                    ocr_text = self._ocr_subprocess("Electron")
-                if ocr_text and len(ocr_text) > 20:
-                    content = content + "\n\n" + ocr_text
+            # Skip placeholder / error payloads like "(No document)"
+            stripped = content.strip()
+            if stripped.startswith("(") and stripped.endswith(")"):
+                time.sleep(POLL_INTERVAL)
+                continue
 
             text = _clean_text(content)[:MAX_CHARS]
 
