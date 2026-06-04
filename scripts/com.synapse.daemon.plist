@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.synapse.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sahithreddythummala/Desktop/Apple_Projects/Synapse/.venv/bin/python</string>
+        <string>-u</string>
+        <string>/Users/sahithreddythummala/Desktop/Apple_Projects/Synapse/synapse/daemon.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/sahithreddythummala/Desktop/Apple_Projects/Synapse</string>
+
+    <!-- Only restart on crash (non-zero exit), not on clean shutdown -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sahithreddythummala/Library/Logs/Synapse/daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/sahithreddythummala/Library/Logs/Synapse/daemon.error.log</string>
+
+    <!-- Generous throttle — prevents rapid-restart resource collisions -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TOKENIZERS_PARALLELISM</key>
+        <string>false</string>
+        <key>HOME</key>
+        <string>/Users/sahithreddythummala</string>
+        <key>PYTHONDONTWRITEBYTECODE</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>
