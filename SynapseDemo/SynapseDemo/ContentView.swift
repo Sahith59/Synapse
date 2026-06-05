@@ -1,4 +1,118 @@
 import SwiftUI
+import AppKit
+
+// MARK: - Global cursor tracker
+//
+// Ported from the web spotlight card's `pointermove` listener: one app-wide
+// monitor publishes the cursor location (window coords, top-left origin) so any
+// card can paint a glow that follows the pointer.
+
+final class MouseTracker: ObservableObject {
+    static let shared = MouseTracker()
+    @Published var location: CGPoint = .zero
+    private var monitor: Any?
+
+    private init() {
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+            if let window = event.window {
+                let p = event.locationInWindow
+                let h = window.contentLayoutRect.height
+                self?.location = CGPoint(x: p.x, y: h - p.y)
+            }
+            return event
+        }
+        DispatchQueue.main.async { NSApp.windows.forEach { $0.acceptsMouseMovedEvents = true } }
+    }
+}
+
+// MARK: - Synapse card style
+//
+// One cohesive surface used by every card. Fuses (1) a cursor-tracking radial
+// spotlight glow that brightens near the pointer (from the web spotlight card)
+// with (2) a neumorphic dark-glass surface: soft dual shadow + specular Liquid
+// Glass stroke. Dark iOS-26 aesthetic.
+
+struct SynapseCardStyle: ViewModifier {
+    var radius: CGFloat = 18
+    var tint: Color = Color(red: 0.0, green: 0.78, blue: 0.85)
+    var padding: CGFloat = 16
+    var interactive: Bool = true
+
+    @ObservedObject private var mouse = MouseTracker.shared
+    @State private var hovered = false
+    @State private var cardFrame: CGRect = .zero
+
+    private var localPoint: CGPoint {
+        CGPoint(x: mouse.location.x - cardFrame.minX, y: mouse.location.y - cardFrame.minY)
+    }
+
+    private var proximity: CGFloat {
+        guard cardFrame.width > 0 else { return 0 }
+        let dx = mouse.location.x - cardFrame.midX, dy = mouse.location.y - cardFrame.midY
+        let dist = sqrt(dx * dx + dy * dy)
+        let reach = max(cardFrame.width, cardFrame.height) * 1.1
+        return max(0, min(1, 1 - dist / reach))
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .padding(padding)
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(Color(red: 0.10, green: 0.12, blue: 0.15).opacity(0.86))
+                        .background(
+                            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                                .environment(\.colorScheme, .dark)
+                        )
+
+                    if interactive {
+                        RadialGradient(
+                            colors: [tint.opacity(0.20 + 0.32 * proximity), .clear],
+                            center: UnitPoint(
+                                x: cardFrame.width  > 0 ? max(0, min(1, localPoint.x / cardFrame.width))  : 0.5,
+                                y: cardFrame.height > 0 ? max(0, min(1, localPoint.y / cardFrame.height)) : 0.5),
+                            startRadius: 0, endRadius: 240)
+                        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                        .blendMode(.plusLighter)
+                        .allowsHitTesting(false)
+                    }
+
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(tint.opacity(0.05))
+
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [.white.opacity(0.26 + 0.24 * proximity), .white.opacity(0.04)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing),
+                            lineWidth: 0.9)
+                }
+                .shadow(color: .black.opacity(0.40), radius: hovered ? 26 : 18, x: 0, y: hovered ? 14 : 9)
+                .shadow(color: tint.opacity(hovered ? 0.28 : 0.0), radius: 22, x: 0, y: 6)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { cardFrame = geo.frame(in: .global) }
+                            .onChange(of: mouse.location) { _ in cardFrame = geo.frame(in: .global) }
+                    }
+                )
+            }
+            .scaleEffect(hovered && interactive ? 1.012 : 1.0)
+            .animation(.spring(response: 0.30, dampingFraction: 0.72), value: hovered)
+            .onHover { h in if interactive { hovered = h } }
+    }
+}
+
+extension View {
+    func synapseCard(radius: CGFloat = 18,
+                     tint: Color = Color(red: 0.0, green: 0.78, blue: 0.85),
+                     padding: CGFloat = 16,
+                     interactive: Bool = true) -> some View {
+        modifier(SynapseCardStyle(radius: radius, tint: tint, padding: padding, interactive: interactive))
+    }
+}
 
 // MARK: - Navigation
 
@@ -31,9 +145,13 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 Sidebar(tab: $tab, vm: vm)
                     .frame(width: 210)
-                    .background(.regularMaterial)
-
-                Divider().opacity(0.35)
+                    .background(
+                        Color(red: 0.055, green: 0.065, blue: 0.10).opacity(0.55)
+                            .background(.ultraThinMaterial.opacity(0.5))
+                    )
+                    .overlay(alignment: .trailing) {
+                        Rectangle().fill(Color.white.opacity(0.06)).frame(width: 0.5)
+                    }
 
                 // Detail
                 ZStack {
@@ -45,6 +163,9 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        // Force dark scheme so .primary/.secondary text resolve light on the dark
+        // glass surfaces — one switch corrects contrast across every view.
+        .preferredColorScheme(.dark)
         .task { await vm.checkDaemon() }
     }
 }
@@ -56,12 +177,22 @@ struct LiquidBackground: View {
 
     var body: some View {
         ZStack {
-            Color(red: 0.95, green: 0.97, blue: 0.99)   // cool white base
+            // Deep space base — a near-black with a faint blue cast
+            LinearGradient(
+                colors: [Color(red: 0.045, green: 0.055, blue: 0.085),
+                         Color(red: 0.07, green: 0.08, blue: 0.12)],
+                startPoint: .topLeading, endPoint: .bottomTrailing)
 
-            blob(.init(red: 0.62, green: 0.90, blue: 0.95), 460, x: animate ? -170 : -200, y: animate ? -110 : -150, dur: 9)
-            blob(.init(red: 0.58, green: 0.95, blue: 0.82), 400, x: animate ?  160 : 110,  y: animate ?  -70 : -110, dur: 11)
-            blob(.init(red: 1.00, green: 0.84, blue: 0.62), 380, x: animate ? -80  : -40,  y: animate ?  155 : 120,  dur: 10)
-            blob(.init(red: 0.68, green: 0.88, blue: 1.00), 420, x: animate ?  155 : 200,  y: animate ?  135 : 100,  dur: 12)
+            // Saturated aurora blobs, dimmed so cards read on top
+            blob(.init(red: 0.0,  green: 0.55, blue: 0.65), 520, x: animate ? -190 : -230, y: animate ? -120 : -160, dur: 9)
+            blob(.init(red: 0.10, green: 0.65, blue: 0.50), 440, x: animate ?  180 : 130,  y: animate ?  -80 : -120, dur: 11)
+            blob(.init(red: 0.55, green: 0.30, blue: 0.70), 420, x: animate ? -100 : -60,  y: animate ?  170 : 135,  dur: 10)
+            blob(.init(red: 0.0,  green: 0.45, blue: 0.75), 470, x: animate ?  175 : 220,  y: animate ?  150 : 115,  dur: 12)
+
+            // Subtle vignette to focus attention center-screen
+            RadialGradient(
+                colors: [.clear, Color.black.opacity(0.35)],
+                center: .center, startRadius: 200, endRadius: 900)
         }
         .onAppear { animate = true }
     }
@@ -69,8 +200,8 @@ struct LiquidBackground: View {
     private func blob(_ color: Color, _ size: CGFloat,
                       x: CGFloat, y: CGFloat, dur: Double) -> some View {
         Circle()
-            .fill(color.opacity(0.50))
-            .blur(radius: 90)
+            .fill(color.opacity(0.34))
+            .blur(radius: 110)
             .frame(width: size, height: size)
             .offset(x: x, y: y)
             .animation(.easeInOut(duration: dur).repeatForever(autoreverses: true), value: animate)
@@ -85,27 +216,15 @@ struct Glass<Content: View>: View {
     var pad:    CGFloat = 14
     @ViewBuilder var content: () -> Content
 
+    // Map the old per-card tints onto the new dark card system. A clear tint
+    // falls back to the signature teal so every surface shares one language.
+    private var resolvedTint: Color {
+        tint == .clear ? Color(red: 0.0, green: 0.78, blue: 0.85) : tint
+    }
+
     var body: some View {
         content()
-            .padding(pad)
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: radius).fill(.regularMaterial)
-                    if tint != .clear {
-                        RoundedRectangle(cornerRadius: radius).fill(tint.opacity(0.08))
-                    }
-                    // Specular highlight — Apple Liquid Glass signature
-                    RoundedRectangle(cornerRadius: radius)
-                        .stroke(
-                            LinearGradient(
-                                colors: [.white.opacity(0.70), .white.opacity(0.15)],
-                                startPoint: .topLeading, endPoint: .bottomTrailing
-                            ), lineWidth: 1
-                        )
-                }
-                .shadow(color: .black.opacity(0.07), radius: 22, x: 0, y: 6)
-                .shadow(color: .black.opacity(0.04), radius: 3,  x: 0, y: 1)
-            }
+            .synapseCard(radius: radius, tint: resolvedTint, padding: pad)
     }
 }
 
