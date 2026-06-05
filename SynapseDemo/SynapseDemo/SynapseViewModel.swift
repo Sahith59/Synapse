@@ -29,6 +29,12 @@ class SynapseViewModel: ObservableObject {
     @Published var memoryNodes: [MemoryNode] = []
     @Published var isLoadingMemory: Bool = false
 
+    // MARK: - Insights (stats, digest)
+
+    @Published var stats: DaemonStats = DaemonStats()
+    @Published var digestText: String = ""
+    @Published var isDigesting: Bool = false
+
     // MARK: - Models
 
     struct ResultItem: Identifiable {
@@ -38,6 +44,7 @@ class SynapseViewModel: ObservableObject {
         let similarity: Double
         let relevance: Int       // calibrated 0-100 relevance for display
         let timestamp: Double
+        var tags: [String] = []
     }
 
     struct MemoryNode: Identifiable {
@@ -45,6 +52,15 @@ class SynapseViewModel: ObservableObject {
         let text: String
         let source: String
         let timestamp: Double
+        var tags: [String] = []
+    }
+
+    struct DaemonStats {
+        var vectors: Int = 0
+        var p50: Double = 0
+        var p95: Double = 0
+        var indexBytes: Int = 0
+        var dim: Int = 384
     }
 
     // MARK: - Display text cleanup
@@ -166,11 +182,7 @@ class SynapseViewModel: ObservableObject {
 
         withAnimation(.easeOut(duration: 0.2)) {
             queryLatencyMs = elapsed
-            results = hits.map {
-                ResultItem(id: $0.id, text: $0.text, source: $0.source,
-                           similarity: $0.similarity, relevance: $0.relevance,
-                           timestamp: $0.timestamp)
-            }
+            results = hits
             isQuerying = false
         }
 
@@ -222,13 +234,57 @@ class SynapseViewModel: ObservableObject {
                   let txt = item["text"]      as? String,
                   let src = item["source"]    as? String,
                   let ts  = item["timestamp"] as? Double else { return nil }
-            return MemoryNode(id: id, text: txt, source: src, timestamp: ts)
+            let tags = item["tags"] as? [String] ?? []
+            return MemoryNode(id: id, text: txt, source: src, timestamp: ts, tags: tags)
         }
 
         withAnimation {
             memoryNodes = nodes
             if let total = json["total"] as? Int { totalSnippets = total }
             isLoadingMemory = false
+        }
+    }
+
+    // MARK: - Insights
+
+    func fetchStats() async {
+        guard let d = await rawSend(json: ["action": "stats"]),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              j["ok"] as? Bool == true else { return }
+        withAnimation {
+            stats = DaemonStats(
+                vectors:    j["faiss_vectors"] as? Int ?? 0,
+                p50:        j["embed_p50_ms"] as? Double ?? 0,
+                p95:        j["embed_p95_ms"] as? Double ?? 0,
+                indexBytes: j["index_bytes"] as? Int ?? 0,
+                dim:        j["embed_dim"] as? Int ?? 384)
+        }
+    }
+
+    func runDigest() async {
+        withAnimation { isDigesting = true; digestText = "" }
+        let d = await rawSend(json: ["action": "digest", "hours": 24], timeout: 120)
+        var text = "Couldn't generate a digest right now."
+        if let d, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+           j["ok"] as? Bool == true, let s = j["digest"] as? String {
+            text = SynapseViewModel.prettify(s)
+        }
+        withAnimation { digestText = text; isDigesting = false }
+    }
+
+    func relatedMemories(for id: Int) async -> [ResultItem] {
+        guard let d = await rawSend(json: ["action": "related", "id": id, "top_k": 4]),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              j["ok"] as? Bool == true,
+              let arr = j["results"] as? [[String: Any]] else { return [] }
+        return arr.compactMap {
+            guard let rid = $0["id"] as? Int, let tx = $0["text"] as? String,
+                  let src = $0["source"] as? String, let ts = $0["timestamp"] as? Double
+            else { return nil }
+            let rel = $0["relevance"] as? Int ?? 0
+            return ResultItem(id: rid, text: tx, source: src, similarity: 0,
+                              relevance: rel, timestamp: ts,
+                              tags: $0["tags"] as? [String] ?? [])
         }
     }
 
@@ -306,9 +362,7 @@ class SynapseViewModel: ObservableObject {
         return ResultItem(id: id, text: tx, source: sr, similarity: 1.0, relevance: 100, timestamp: ts)
     }
 
-    private func rawQuery(intent: String, topK: Int) async
-        -> [(id: Int, text: String, source: String, similarity: Double, relevance: Int, timestamp: Double)]
-    {
+    private func rawQuery(intent: String, topK: Int) async -> [ResultItem] {
         guard let d   = await rawSend(json: ["action": "query", "intent": intent, "top_k": topK]),
               let j   = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
               j["ok"] as? Bool == true,
@@ -320,7 +374,9 @@ class SynapseViewModel: ObservableObject {
                   let sim = $0["similarity"] as? Double,
                   let ts  = $0["timestamp"]  as? Double else { return nil }
             let rel = $0["relevance"] as? Int ?? Int(sim * 100)
-            return (id, tx, src, sim, rel, ts)
+            return ResultItem(id: id, text: tx, source: src, similarity: sim,
+                              relevance: rel, timestamp: ts,
+                              tags: $0["tags"] as? [String] ?? [])
         }
     }
 

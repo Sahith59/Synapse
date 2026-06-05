@@ -343,6 +343,11 @@ private struct Sidebar: View {
 
             Spacer()
 
+            // Live on-device performance — proves we measure and optimize ML latency
+            StatStrip(vm: vm)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 4)
+
             // Footer
             Divider().opacity(0.3).padding(.horizontal, 14)
             VStack(spacing: 7) {
@@ -406,6 +411,119 @@ private struct NavItem: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
+    }
+}
+
+// MARK: - Live performance stats strip
+
+private struct StatStrip: View {
+    @ObservedObject var vm: SynapseViewModel
+
+    private func fmtBytes(_ b: Int) -> String {
+        if b >= 1_048_576 { return String(format: "%.1fMB", Double(b) / 1_048_576) }
+        if b >= 1024      { return String(format: "%.0fKB", Double(b) / 1024) }
+        return "\(b)B"
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Image(systemName: "bolt.fill").font(.system(size: 8)).foregroundStyle(.teal)
+                Text("ON-DEVICE PERFORMANCE")
+                    .font(.system(size: 8, weight: .bold)).kerning(0.6)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+            HStack(spacing: 8) {
+                stat("\(String(format: "%.1f", vm.stats.p50))ms", "embed p50")
+                stat("\(vm.stats.vectors)", "vectors")
+                stat(fmtBytes(vm.stats.indexBytes), "index")
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(Color(red: 0.925, green: 0.935, blue: 0.955))
+                .shadow(color: Color(red: 0.55, green: 0.58, blue: 0.64).opacity(0.30), radius: 5, x: 3, y: 3)
+                .shadow(color: .white.opacity(0.85), radius: 5, x: -3, y: -3)
+        )
+        .task {
+            while !Task.isCancelled {
+                await vm.fetchStats()
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
+    }
+
+    private func stat(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 1) {
+            Text(value)
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(.primary)
+                .contentTransition(.numericText())
+                .lineLimit(1).minimumScaleFactor(0.7)
+            Text(label)
+                .font(.system(size: 7.5, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Daily digest card
+
+private struct DigestCard: View {
+    @ObservedObject var vm: SynapseViewModel
+
+    var body: some View {
+        Glass(radius: 16, tint: Color(red: 0.55, green: 0.40, blue: 0.85), pad: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 9) {
+                    Image(systemName: "text.append")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color(red: 0.55, green: 0.40, blue: 0.85))
+                    Text("Daily Digest")
+                        .font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                    Button { Task { await vm.runDigest() } } label: {
+                        HStack(spacing: 5) {
+                            if vm.isDigesting {
+                                ProgressView().scaleEffect(0.55).tint(.white)
+                            } else {
+                                Image(systemName: "sparkles").font(.system(size: 10, weight: .bold))
+                            }
+                            Text(vm.isDigesting ? "Summarizing…" : "Summarize my day")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 11).padding(.vertical, 6)
+                        .background(Capsule().fill(LinearGradient(
+                            colors: [Color(red: 0.55, green: 0.40, blue: 0.85),
+                                     Color(red: 0.42, green: 0.30, blue: 0.70)],
+                            startPoint: .leading, endPoint: .trailing)))
+                        .shadow(color: Color(red: 0.5, green: 0.35, blue: 0.8).opacity(0.4), radius: 6, y: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.isDigesting)
+                }
+
+                if !vm.digestText.isEmpty {
+                    Text(vm.digestText)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.primary.opacity(0.85))
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                } else if !vm.isDigesting {
+                    Text("Get a one-paragraph summary of everything you captured today — synthesized on-device by the local language model.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 }
 
@@ -717,6 +835,11 @@ struct QueryPane: View {
                             }
                         }
                     }
+                }
+
+                // Daily digest — multi-document summarization of today's memories
+                if vm.results.isEmpty && vm.ragAnswer.isEmpty {
+                    DigestCard(vm: vm)
                 }
 
                 // Results
@@ -1067,6 +1190,34 @@ struct MemoryView: View {
     }
 }
 
+// A small pill for a zero-shot topical tag, color-coded by category.
+private struct TagChip: View {
+    let tag: String
+    private var color: Color {
+        switch tag {
+        case "work":     return Color(red: 0.0, green: 0.55, blue: 0.85)
+        case "code":     return Color(red: 0.30, green: 0.70, blue: 0.45)
+        case "research": return Color(red: 0.55, green: 0.40, blue: 0.85)
+        case "shopping": return Color(red: 0.90, green: 0.55, blue: 0.20)
+        case "travel":   return Color(red: 0.0, green: 0.65, blue: 0.72)
+        case "finance":  return Color(red: 0.20, green: 0.62, blue: 0.40)
+        case "email":    return Color(red: 0.60, green: 0.45, blue: 0.80)
+        case "social":   return Color(red: 0.85, green: 0.40, blue: 0.60)
+        case "writing":  return Color(red: 0.50, green: 0.50, blue: 0.55)
+        case "health":   return Color(red: 0.90, green: 0.35, blue: 0.40)
+        default:         return Color(red: 0.0, green: 0.6, blue: 0.65)
+        }
+    }
+    var body: some View {
+        Text(tag)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7).padding(.vertical, 2.5)
+            .background(Capsule().fill(color.opacity(0.14)))
+            .overlay(Capsule().stroke(color.opacity(0.30), lineWidth: 0.6))
+    }
+}
+
 private struct MemChip: View {
     let label: String; let active: Bool; let action: () -> Void
     @State private var hovered = false
@@ -1104,6 +1255,8 @@ private struct MemRow: View {
     @State private var appeared = false
     @State private var expanded = false
     @State private var copied   = false
+    @State private var related: [SynapseViewModel.ResultItem] = []
+    @State private var loadingRelated = false
 
     var tint: Color {
         switch node.source.lowercased() {
@@ -1151,6 +1304,13 @@ private struct MemRow: View {
                     .lineSpacing(3)
                     .textSelection(.enabled)
 
+                // Zero-shot topical tags
+                if !node.tags.isEmpty {
+                    HStack(spacing: 5) {
+                        ForEach(node.tags, id: \.self) { tag in TagChip(tag: tag) }
+                    }
+                }
+
                 HStack(spacing: 8) {
                     Text("#\(node.id)")
                         .font(.system(size: 9, design: .monospaced))
@@ -1181,6 +1341,36 @@ private struct MemRow: View {
                         .buttonStyle(.plain)
                         .transition(.opacity.combined(with: .scale(scale: 0.8)))
                     }
+                }
+
+                // Semantic neighbours — k-NN clustering in the embedding space
+                if expanded && (!related.isEmpty || loadingRelated) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "point.3.connected.trianglepath.dotted")
+                                .font(.system(size: 8))
+                            Text("RELATED MEMORIES").font(.system(size: 8, weight: .bold)).kerning(0.5)
+                        }
+                        .foregroundStyle(.tertiary)
+                        if loadingRelated {
+                            Text("Finding neighbors…").font(.system(size: 10)).foregroundStyle(.secondary)
+                        } else {
+                            ForEach(related) { r in
+                                HStack(spacing: 6) {
+                                    Text("\(r.relevance)%")
+                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(tint)
+                                        .frame(width: 30, alignment: .leading)
+                                    Text(SynapseViewModel.prettify(r.text))
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 3)
+                    .transition(.opacity)
                 }
             }
         }
@@ -1218,8 +1408,15 @@ private struct MemRow: View {
         .scaleEffect(hovered ? 1.012 : 1.0)
         .contentShape(Rectangle())
         .onTapGesture {
-            if node.text.count > 90 {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { expanded.toggle() }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { expanded.toggle() }
+            if expanded && related.isEmpty {
+                loadingRelated = true
+                Task {
+                    let r = await vm.relatedMemories(for: node.id)
+                    await MainActor.run {
+                        withAnimation { related = r; loadingRelated = false }
+                    }
+                }
             }
         }
         .onHover { h in withAnimation(.spring(response: 0.22, dampingFraction: 0.7)) { hovered = h } }

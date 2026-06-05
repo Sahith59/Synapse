@@ -42,6 +42,7 @@ from typing import Callable, Any
 
 from synapse.store import SynapseStore
 from synapse.llm import rag_engine
+from synapse import tagger
 
 SOCKET_PATH = "/tmp/synapse.sock"
 MAX_MSG_BYTES = 65_536      # 64 KB
@@ -67,6 +68,16 @@ def _calibrate_relevance(cosine: float) -> int:
     return int(round(5 + frac * 94))
 
 
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    k = (len(s) - 1) * (pct / 100.0)
+    lo = int(k)
+    hi = min(lo + 1, len(s) - 1)
+    return s[lo] + (s[hi] - s[lo]) * (k - lo)
+
+
 class SynapseServer:
     def __init__(self, embedder_fn, store):
         """
@@ -74,10 +85,22 @@ class SynapseServer:
             embedder_fn: callable(text: str) → EmbedResult
             store:       SynapseStore instance
         """
-        self._embed = embedder_fn
+        self._embed_fn = embedder_fn
         self._store = store
         self._sock: socket.socket | None = None
         self._running = False
+        # Rolling window of recent embed latencies (ms) for the stats panel.
+        self._latencies: list[float] = []
+        self._lat_lock = threading.Lock()
+
+    def _embed(self, text):
+        """Embed and record latency for the live performance stats."""
+        r = self._embed_fn(text)
+        with self._lat_lock:
+            self._latencies.append(r.latency_ms)
+            if len(self._latencies) > 200:
+                self._latencies.pop(0)
+        return r
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -179,8 +202,11 @@ class SynapseServer:
                         "latency_ms": round(result.latency_ms, 2),
                     }
 
-            vid = self._store.add(text, result.vector, source)
-            return {"ok": True, "id": vid, "latency_ms": round(result.latency_ms, 2)}
+            # Zero-shot topical tags from the embedding we already have (no extra
+            # inference cost) — e.g. work, code, shopping, travel.
+            tags = tagger.tag_vector(result.vector)
+            vid = self._store.add(text, result.vector, source, tags=tags)
+            return {"ok": True, "id": vid, "tags": tags, "latency_ms": round(result.latency_ms, 2)}
 
         elif action == "query":
             intent = req.get("intent", "").strip()
@@ -201,6 +227,7 @@ class SynapseServer:
                         "similarity": round(h.similarity, 4),
                         "relevance":  _calibrate_relevance(h.similarity),
                         "timestamp":  h.timestamp,
+                        "tags":       h.tags,
                     }
                     for h in hits
                 ],
@@ -225,7 +252,8 @@ class SynapseServer:
                     "id": latest.id,
                     "text": latest.text,
                     "source": latest.source,
-                    "timestamp": latest.timestamp
+                    "timestamp": latest.timestamp,
+                    "tags": latest.tags
                 }}
             return {"ok": True, "latest": None}
             
@@ -257,11 +285,66 @@ class SynapseServer:
             return {
                 "ok":    True,
                 "items": [
-                    {"id": i.id, "text": i.text, "source": i.source, "timestamp": i.timestamp}
+                    {"id": i.id, "text": i.text, "source": i.source,
+                     "timestamp": i.timestamp, "tags": i.tags}
                     for i in items
                 ],
                 "total": counts["active_snippets"],
             }
+
+        elif action == "related":
+            # Semantic neighbours of an existing memory — vector-space clustering.
+            mem_id = req.get("id")
+            if not isinstance(mem_id, int):
+                return {"ok": False, "error": "id must be an integer"}
+            top_k = int(req.get("top_k", 5))
+            text = self._store.text_for(mem_id)
+            if text is None:
+                return {"ok": False, "error": "memory not found"}
+            vec = self._embed(text).vector
+            hits = self._store.search(vec, top_k=top_k + 1)
+            hits = [h for h in hits if h.id != mem_id][:top_k]
+            return {
+                "ok": True,
+                "results": [
+                    {"id": h.id, "text": h.text, "source": h.source,
+                     "relevance": _calibrate_relevance(h.similarity),
+                     "timestamp": h.timestamp, "tags": h.tags}
+                    for h in hits
+                ],
+            }
+
+        elif action == "stats":
+            counts = self._store.count()
+            lat = self._latencies
+            p50 = _percentile(lat, 50)
+            p95 = _percentile(lat, 95)
+            return {
+                "ok": True,
+                "active_snippets": counts["active_snippets"],
+                "faiss_vectors":   counts["faiss_vectors"],
+                "embed_p50_ms":    round(p50, 2),
+                "embed_p95_ms":    round(p95, 2),
+                "embed_samples":   len(lat),
+                "index_bytes":     self._store.index_size_bytes(),
+                "embed_dim":       384,
+            }
+
+        elif action == "digest":
+            # Summarize the recent window of memories into a short narrative.
+            hours = float(req.get("hours", 24))
+            cutoff = time.time() - hours * 3600
+            items = self._store.list_snippets(limit=200)
+            recent = [i for i in items if i.timestamp >= cutoff]
+            if not recent:
+                return {"ok": True, "digest": "No memories captured in this window yet.",
+                        "count": 0}
+            snippets = [i.text for i in recent[:40]]
+            try:
+                summary = rag_engine.digest(snippets)
+                return {"ok": True, "digest": summary, "count": len(recent)}
+            except Exception as e:
+                return {"ok": False, "error": f"Digest failed: {str(e)}"}
 
         else:
             return {"ok": False, "error": f"Unknown action: {action!r}"}

@@ -22,7 +22,7 @@ import os
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -39,6 +39,13 @@ EMBED_DIM    = 384
 FLUSH_INTERVAL = 20
 
 
+def _split_tags(raw) -> list[str]:
+    """Parse the comma-joined tags column into a list."""
+    if not raw:
+        return []
+    return [t for t in str(raw).split(",") if t]
+
+
 @dataclass
 class QueryResult:
     id: int
@@ -46,6 +53,7 @@ class QueryResult:
     source: str
     similarity: float
     timestamp: float
+    tags: list[str] = field(default_factory=list)
 
 
 class SynapseStore:
@@ -74,6 +82,10 @@ class SynapseStore:
                 active    INTEGER NOT NULL DEFAULT 1
             )
         """)
+        # Migration: add tags column to pre-existing databases.
+        cols = {row[1] for row in self._db.execute("PRAGMA table_info(snippets)")}
+        if "tags" not in cols:
+            self._db.execute("ALTER TABLE snippets ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
         self._db.commit()
 
     # ── FAISS ─────────────────────────────────────────────────────────────────
@@ -120,12 +132,14 @@ class SynapseStore:
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
-    def add(self, text: str, vector: np.ndarray, source: str = "unknown") -> int:
+    def add(self, text: str, vector: np.ndarray, source: str = "unknown",
+            tags: list[str] | None = None) -> int:
         with self._lock:
             ts  = time.time()
+            tag_str = ",".join(tags) if tags else ""
             cur = self._db.execute(
-                "INSERT INTO snippets (text, source, timestamp) VALUES (?, ?, ?)",
-                (text, source, ts),
+                "INSERT INTO snippets (text, source, timestamp, tags) VALUES (?, ?, ?, ?)",
+                (text, source, ts, tag_str),
             )
             row_id = cur.lastrowid
             self._db.commit()
@@ -156,7 +170,7 @@ class SynapseStore:
 
             placeholders = ",".join("?" * len(valid_ids))
             rows = self._db.execute(
-                f"SELECT id, text, source, timestamp "
+                f"SELECT id, text, source, timestamp, tags "
                 f"FROM snippets WHERE id IN ({placeholders}) AND active=1",
                 valid_ids,
             ).fetchall()
@@ -174,21 +188,38 @@ class SynapseStore:
                 results.append(QueryResult(
                     id=row[0], text=row[1], source=row[2],
                     similarity=float(score), timestamp=row[3],
+                    tags=_split_tags(row[4]),
                 ))
 
             results.sort(key=lambda r: r.similarity, reverse=True)
             return results[:top_k]
 
+    def text_for(self, snippet_id: int) -> Optional[str]:
+        """Return the raw text for a memory id (used to re-embed for k-NN)."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT text FROM snippets WHERE id=? AND active=1", (int(snippet_id),)
+            ).fetchone()
+            return row[0] if row else None
+
+    def index_size_bytes(self) -> int:
+        """On-disk size of the FAISS index file, for the stats panel."""
+        try:
+            return INDEX_PATH.stat().st_size if INDEX_PATH.exists() else 0
+        except Exception:
+            return 0
+
     def get_latest(self) -> Optional[QueryResult]:
         with self._lock:
             row = self._db.execute(
-                "SELECT id, text, source, timestamp "
+                "SELECT id, text, source, timestamp, tags "
                 "FROM snippets WHERE active=1 ORDER BY id DESC LIMIT 1"
             ).fetchone()
             if not row:
                 return None
             return QueryResult(id=row[0], text=row[1], source=row[2],
-                               similarity=1.0, timestamp=row[3])
+                               similarity=1.0, timestamp=row[3],
+                               tags=_split_tags(row[4]))
 
     def delete(self, snippet_id: int) -> bool:
         with self._lock:
@@ -224,19 +255,19 @@ class SynapseStore:
         with self._lock:
             if source:
                 rows = self._db.execute(
-                    "SELECT id, text, source, timestamp FROM snippets "
+                    "SELECT id, text, source, timestamp, tags FROM snippets "
                     "WHERE active=1 AND source=? ORDER BY id DESC LIMIT ? OFFSET ?",
                     (source, limit, offset),
                 ).fetchall()
             else:
                 rows = self._db.execute(
-                    "SELECT id, text, source, timestamp FROM snippets "
+                    "SELECT id, text, source, timestamp, tags FROM snippets "
                     "WHERE active=1 ORDER BY id DESC LIMIT ? OFFSET ?",
                     (limit, offset),
                 ).fetchall()
             return [
                 QueryResult(id=r[0], text=r[1], source=r[2],
-                            similarity=1.0, timestamp=r[3])
+                            similarity=1.0, timestamp=r[3], tags=_split_tags(r[4]))
                 for r in rows
             ]
 

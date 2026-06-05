@@ -100,6 +100,38 @@ class RAGEngine:
 
         return response.strip()
 
+    def digest(self, snippets: List[str]) -> str:
+        """Summarize a window of captured memories into a short narrative."""
+        self._ensure_model_loaded()
+        if not snippets:
+            return "No memories to summarize yet."
+
+        context_block = "\n".join(f"- {s.strip()[:300]}" for s in snippets)
+        system_msg = (
+            "You are Synapse, a personal memory assistant. The user gives you a list "
+            "of things they saw and did on their Mac today (web pages, searches, "
+            "notes, emails). Write a brief, friendly summary of their day in 2-4 "
+            "sentences — what they focused on and any themes. Be specific but concise, "
+            "and do not list every item or include URLs."
+        )
+        messages = [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": f"Today's activity:\n{context_block}\n\nSummarize my day:"},
+        ]
+        prompt = self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+
+        print(f"[RAG] Generating daily digest from {len(snippets)} memories...", flush=True)
+        t0 = time.perf_counter()
+        sampler = self._make_sampler(temp=0.4)
+        response = self._generate(
+            self.model, self.tokenizer, prompt=prompt,
+            verbose=False, max_tokens=220, sampler=sampler,
+        )
+        print(f"[RAG] Digest generated in {time.perf_counter() - t0:.2f}s", flush=True)
+        return response.strip()
+
 
 # Singleton instance
 rag_engine = RAGEngine()
