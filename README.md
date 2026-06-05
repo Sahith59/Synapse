@@ -34,7 +34,8 @@ The app is built with SwiftUI on Apple Silicon macOS, using a light neumorphic g
 
 ### Main interface — semantic search in action
 
-![Main query pane with live context](Screenshots/01_main_interface.png)
+<img width="1113" height="710" alt="01_main_interface" src="https://github.com/user-attachments/assets/739688c0-82b6-4ee2-ab7c-e59187824b12" />
+
 
 The left sidebar shows:
 - **Memory count** (344 captured snippets, updating live)
@@ -51,7 +52,8 @@ The right pane shows **Live Context** — what's currently in focus across your 
 
 ### Memory browser — k-NN semantic neighbors
 
-![Memory list with related memories](Screenshots/02_memory_list.png)
+<img width="1109" height="715" alt="02_memory_list" src="https://github.com/user-attachments/assets/f520a6d8-8f30-4afd-9b24-cdf528ca9ab9" />
+
 
 Switch to the **Memory** tab to browse all your captured memories chronologically. Each row shows:
 - **Source** (Chrome, Notes, VS Code, Safari, etc.)
@@ -68,7 +70,8 @@ This feature reveals clusters of semantically related things you've seen — use
 
 ### Daily digest — on-device LLM summarization
 
-![Daily digest with multi-document summary](Screenshots/03_daily_digest.png)
+<img width="1117" height="715" alt="03_daily_digest" src="https://github.com/user-attachments/assets/382cd7bb-4263-4a73-9701-4fa08f45dcc2" />
+
 
 The **Daily Digest** card appears on the main pane. Tap "Summarize my day" to:
 1. Feed all of today's memories (up to 40 of the most recent) to the local Llama-3.2 language model
