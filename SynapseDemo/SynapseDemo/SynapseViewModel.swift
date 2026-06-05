@@ -16,6 +16,7 @@ class SynapseViewModel: ObservableObject {
     // MARK: - Observer (live context)
 
     @Published var activeContext: ResultItem?
+    @Published var justCaptured: Bool = false   // brief pulse when new content lands
     private var liveContextTask: Task<Void, Never>?
 
     // MARK: - Daemon status
@@ -128,10 +129,20 @@ class SynapseViewModel: ObservableObject {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                                 activeContext = latest
                             }
-                            // NOTE: Do NOT auto-populate queryText or trigger query().
-                            // The observer pane is display-only. Search is user-initiated.
+                            // Flash the "just captured" pulse so the user can see
+                            // the observer is alive and working.
+                            justCaptured = true
                         }
+                        try? await Task.sleep(nanoseconds: 1_200_000_000)
+                        await MainActor.run { withAnimation { justCaptured = false } }
                     }
+                }
+                // Keep the live memory count fresh so it visibly climbs as the
+                // observer stores new content — the main signal that capture works.
+                let (running, count) = await rawPingAndCount()
+                await MainActor.run {
+                    if daemonRunning != running { withAnimation { daemonRunning = running } }
+                    if totalSnippets != count { withAnimation { totalSnippets = count } }
                 }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }

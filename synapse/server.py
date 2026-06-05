@@ -35,6 +35,7 @@ import os
 import socket
 import sys
 import threading
+import time
 import traceback
 from pathlib import Path
 from typing import Callable, Any
@@ -51,6 +52,7 @@ BACKLOG = 32                # max pending connections
 # the floor, and map the useful band onto a human-readable 0-100 relevance so
 # the UI doesn't show a genuinely good match as "25%".
 MIN_RELEVANCE = 0.20        # below this, a hit is not shown at all
+DEDUP_WINDOW  = 600.0       # seconds: only dedup near-identical captures this recent
 _REL_LOW  = 0.20            # maps to ~5%
 _REL_HIGH = 0.62            # maps to ~99%
 
@@ -161,17 +163,21 @@ class SynapseServer:
                 return {"ok": False, "error": "text is required for store"}
             result = self._embed(text)
 
-            # Server-side semantic dedup: if an almost-identical memory already
-            # exists (cosine >= 0.97), don't store a near-duplicate. This guards
-            # against the observer's in-memory cache resetting on restart.
+            # Server-side semantic dedup, scoped to a RECENT time window. We only
+            # suppress a near-identical memory (cosine >= 0.96) if it was captured
+            # within the last DEDUP_WINDOW seconds. Revisiting the same page later
+            # creates a fresh, timestamped memory — so the store reflects activity
+            # over time and the count grows as you work, instead of looking frozen.
             existing = self._store.search(result.vector, top_k=1)
-            if existing and existing[0].similarity >= 0.97:
-                return {
-                    "ok": True,
-                    "id": existing[0].id,
-                    "duplicate": True,
-                    "latency_ms": round(result.latency_ms, 2),
-                }
+            if existing and existing[0].similarity >= 0.96:
+                age = time.time() - existing[0].timestamp
+                if age < DEDUP_WINDOW:
+                    return {
+                        "ok": True,
+                        "id": existing[0].id,
+                        "duplicate": True,
+                        "latency_ms": round(result.latency_ms, 2),
+                    }
 
             vid = self._store.add(text, result.vector, source)
             return {"ok": True, "id": vid, "latency_ms": round(result.latency_ms, 2)}

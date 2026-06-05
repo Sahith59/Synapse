@@ -120,6 +120,78 @@ extension View {
     }
 }
 
+// MARK: - Synapse Logo
+//
+// A custom neural-synapse mark: a glowing central node with three orbiting
+// satellite nodes joined by synaptic links. The orbit drifts slowly and the
+// core pulses, so the logo feels alive — a memory fabric, firing.
+
+struct SynapseLogo: View {
+    var size: CGFloat = 38
+    @State private var spin = false
+    @State private var pulse = false
+
+    private let teal  = Color(red: 0.0, green: 0.74, blue: 0.82)
+    private let deep  = Color(red: 0.0, green: 0.48, blue: 0.62)
+    private let mint  = Color(red: 0.30, green: 0.92, blue: 0.78)
+
+    var body: some View {
+        ZStack {
+            // Rounded-square base tile with neumorphic depth
+            RoundedRectangle(cornerRadius: size * 0.30, style: .continuous)
+                .fill(LinearGradient(colors: [deep, Color(red: 0.0, green: 0.30, blue: 0.42)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: size, height: size)
+                .overlay(
+                    RoundedRectangle(cornerRadius: size * 0.30, style: .continuous)
+                        .stroke(.white.opacity(0.25), lineWidth: 0.8))
+                .shadow(color: teal.opacity(0.45), radius: 8, y: 3)
+
+            // Synaptic links + nodes. Center is (size/2, size/2).
+            let c = CGPoint(x: size / 2, y: size / 2)
+            let r = size * 0.26
+            let nodes = (0..<3).map { i -> CGPoint in
+                let a = Double(i) / 3.0 * 2 * .pi + (spin ? .pi * 2 : 0) - .pi / 2
+                return CGPoint(x: c.x + cos(a) * r, y: c.y + sin(a) * r)
+            }
+            ZStack {
+                // Links from core to each satellite
+                ForEach(0..<3, id: \.self) { i in
+                    Path { p in
+                        p.move(to: c)
+                        p.addLine(to: nodes[i])
+                    }
+                    .stroke(mint.opacity(0.85),
+                            style: StrokeStyle(lineWidth: 1.3, lineCap: .round))
+                }
+                // Satellite nodes
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(mint)
+                        .frame(width: size * 0.13, height: size * 0.13)
+                        .position(nodes[i])
+                        .shadow(color: mint.opacity(0.8), radius: 3)
+                }
+                // Pulsing core
+                Circle()
+                    .fill(RadialGradient(colors: [.white, teal],
+                                         center: .center, startRadius: 0, endRadius: size * 0.12))
+                    .frame(width: size * 0.22, height: size * 0.22)
+                    .position(c)
+                    .scaleEffect(pulse ? 1.15 : 0.92)
+                    .shadow(color: .white.opacity(0.8), radius: pulse ? 6 : 3)
+            }
+            .frame(width: size, height: size)
+        }
+        .frame(width: size, height: size)
+        .onAppear {
+            withAnimation(.linear(duration: 18).repeatForever(autoreverses: false)) { spin = true }
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) { pulse = true }
+        }
+        .accessibilityLabel("Synapse")
+    }
+}
+
 // MARK: - Navigation
 
 enum AppTab: String, Identifiable, CaseIterable, Hashable {
@@ -225,22 +297,11 @@ private struct Sidebar: View {
 
             // App identity
             VStack(spacing: 12) {
-                HStack(spacing: 10) {
-                    ZStack {
-                        Circle()
-                            .fill(LinearGradient(
-                                colors: [Color(red: 0.0, green: 0.68, blue: 0.75),
-                                         Color(red: 0.0, green: 0.52, blue: 0.60)],
-                                startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .frame(width: 34, height: 34)
-                            .shadow(color: Color.teal.opacity(0.35), radius: 8, y: 3)
-                        Image(systemName: "brain.head.profile")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
+                HStack(spacing: 11) {
+                    SynapseLogo(size: 38)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Synapse")
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: 16, weight: .bold))
                         Text("on-device memory fabric")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
@@ -387,14 +448,27 @@ struct ObserverPane: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        if vm.activeContext != nil {
-                            Text("LIVE")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(Color.orange.gradient)
-                                .clipShape(Capsule())
-                                .shadow(color: .orange.opacity(0.3), radius: 5, y: 2)
+                        if vm.justCaptured {
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark.circle.fill").font(.system(size: 9))
+                                Text("CAPTURED").font(.system(size: 9, weight: .bold))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Color.green.gradient)
+                            .clipShape(Capsule())
+                            .shadow(color: .green.opacity(0.4), radius: 6, y: 2)
+                            .transition(.scale.combined(with: .opacity))
+                        } else if vm.activeContext != nil {
+                            HStack(spacing: 4) {
+                                Circle().fill(.white).frame(width: 5, height: 5)
+                                Text("LIVE").font(.system(size: 9, weight: .bold))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Color.orange.gradient)
+                            .clipShape(Capsule())
+                            .shadow(color: .orange.opacity(0.3), radius: 5, y: 2)
                         }
                     }
                 }
