@@ -54,43 +54,49 @@ struct SynapseCardStyle: ViewModifier {
         return max(0, min(1, 1 - dist / reach))
     }
 
+    // Light neumorphic surface color
+    private let surface = Color(red: 0.925, green: 0.935, blue: 0.955)
+
     func body(content: Content) -> some View {
         content
             .padding(padding)
             .background {
                 ZStack {
+                    // Raised whitish-grey neumorphic surface
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .fill(Color(red: 0.10, green: 0.12, blue: 0.15).opacity(0.86))
-                        .background(
-                            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                                .fill(.ultraThinMaterial)
-                                .environment(\.colorScheme, .dark)
-                        )
+                        .fill(surface)
 
+                    // Soft top-left light highlight built into the fill for the
+                    // "extruded" neumorphic look
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.55), Color.clear],
+                                startPoint: .topLeading, endPoint: .center))
+
+                    // Cursor spotlight — a gentle colored bloom that follows the pointer
                     if interactive {
                         RadialGradient(
-                            colors: [tint.opacity(0.20 + 0.32 * proximity), .clear],
+                            colors: [tint.opacity(0.14 + 0.16 * proximity), .clear],
                             center: UnitPoint(
                                 x: cardFrame.width  > 0 ? max(0, min(1, localPoint.x / cardFrame.width))  : 0.5,
                                 y: cardFrame.height > 0 ? max(0, min(1, localPoint.y / cardFrame.height)) : 0.5),
                             startRadius: 0, endRadius: 240)
                         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-                        .blendMode(.plusLighter)
                         .allowsHitTesting(false)
                     }
 
+                    // Hairline edge for crispness
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .fill(tint.opacity(0.05))
-
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .stroke(
-                            LinearGradient(
-                                colors: [.white.opacity(0.26 + 0.24 * proximity), .white.opacity(0.04)],
-                                startPoint: .topLeading, endPoint: .bottomTrailing),
-                            lineWidth: 0.9)
+                        .stroke(Color.white.opacity(0.7), lineWidth: 0.8)
                 }
-                .shadow(color: .black.opacity(0.40), radius: hovered ? 26 : 18, x: 0, y: hovered ? 14 : 9)
-                .shadow(color: tint.opacity(hovered ? 0.28 : 0.0), radius: 22, x: 0, y: 6)
+                // Neumorphic dual shadow: dark cast bottom-right + bright lift top-left
+                .shadow(color: Color(red: 0.55, green: 0.58, blue: 0.64).opacity(hovered ? 0.55 : 0.42),
+                        radius: hovered ? 22 : 14, x: hovered ? 12 : 8, y: hovered ? 12 : 8)
+                .shadow(color: Color.white.opacity(hovered ? 0.95 : 0.85),
+                        radius: hovered ? 20 : 13, x: hovered ? -10 : -7, y: hovered ? -10 : -7)
+                // Colored hover bloom for liveliness
+                .shadow(color: tint.opacity(hovered ? 0.20 : 0.0), radius: 24, x: 0, y: 6)
                 .background(
                     GeometryReader { geo in
                         Color.clear
@@ -145,12 +151,9 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 Sidebar(tab: $tab, vm: vm)
                     .frame(width: 210)
-                    .background(
-                        Color(red: 0.055, green: 0.065, blue: 0.10).opacity(0.55)
-                            .background(.ultraThinMaterial.opacity(0.5))
-                    )
+                    .background(Color(red: 0.90, green: 0.91, blue: 0.94).opacity(0.6))
                     .overlay(alignment: .trailing) {
-                        Rectangle().fill(Color.white.opacity(0.06)).frame(width: 0.5)
+                        Rectangle().fill(Color.black.opacity(0.06)).frame(width: 0.5)
                     }
 
                 // Detail
@@ -163,9 +166,9 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        // Force dark scheme so .primary/.secondary text resolve light on the dark
-        // glass surfaces — one switch corrects contrast across every view.
-        .preferredColorScheme(.dark)
+        // Light neumorphic theme: .primary resolves to near-black, readable on the
+        // soft whitish-grey glass surfaces.
+        .preferredColorScheme(.light)
         .task { await vm.checkDaemon() }
     }
 }
@@ -173,38 +176,21 @@ struct ContentView: View {
 // MARK: - Liquid Background  (no purple, no lavender)
 
 struct LiquidBackground: View {
-    @State private var animate = false
-
     var body: some View {
         ZStack {
-            // Deep space base — a near-black with a faint blue cast
+            // Soft whitish-grey neumorphic canvas. Neumorphism reads best on a calm,
+            // near-flat surface — the depth comes from the cards' dual shadows, not
+            // a busy background.
             LinearGradient(
-                colors: [Color(red: 0.045, green: 0.055, blue: 0.085),
-                         Color(red: 0.07, green: 0.08, blue: 0.12)],
+                colors: [Color(red: 0.93, green: 0.94, blue: 0.96),
+                         Color(red: 0.88, green: 0.89, blue: 0.92)],
                 startPoint: .topLeading, endPoint: .bottomTrailing)
 
-            // Saturated aurora blobs, dimmed so cards read on top
-            blob(.init(red: 0.0,  green: 0.55, blue: 0.65), 520, x: animate ? -190 : -230, y: animate ? -120 : -160, dur: 9)
-            blob(.init(red: 0.10, green: 0.65, blue: 0.50), 440, x: animate ?  180 : 130,  y: animate ?  -80 : -120, dur: 11)
-            blob(.init(red: 0.55, green: 0.30, blue: 0.70), 420, x: animate ? -100 : -60,  y: animate ?  170 : 135,  dur: 10)
-            blob(.init(red: 0.0,  green: 0.45, blue: 0.75), 470, x: animate ?  175 : 220,  y: animate ?  150 : 115,  dur: 12)
-
-            // Subtle vignette to focus attention center-screen
+            // Very subtle cool highlight top-left for a gentle light source
             RadialGradient(
-                colors: [.clear, Color.black.opacity(0.35)],
-                center: .center, startRadius: 200, endRadius: 900)
+                colors: [Color.white.opacity(0.5), .clear],
+                center: .topLeading, startRadius: 0, endRadius: 700)
         }
-        .onAppear { animate = true }
-    }
-
-    private func blob(_ color: Color, _ size: CGFloat,
-                      x: CGFloat, y: CGFloat, dur: Double) -> some View {
-        Circle()
-            .fill(color.opacity(0.34))
-            .blur(radius: 110)
-            .frame(width: size, height: size)
-            .offset(x: x, y: y)
-            .animation(.easeInOut(duration: dur).repeatForever(autoreverses: true), value: animate)
     }
 }
 
@@ -493,8 +479,8 @@ private struct ContextCard: View {
 
                 Rectangle().fill(Color.orange.opacity(0.12)).frame(height: 0.5)
 
-                Text(String(item.text.prefix(280)))
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(String(SynapseViewModel.prettify(item.text).prefix(280)))
+                    .font(.system(size: 12)).foregroundStyle(.primary.opacity(0.8))
                     .lineSpacing(3.5).lineLimit(8)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(14)
@@ -831,8 +817,8 @@ private struct ResultCard: View {
                             .foregroundStyle(accent)
                     }
 
-                    Text(result.text)
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(SynapseViewModel.prettify(result.text))
+                        .font(.system(size: 12)).foregroundStyle(.primary.opacity(0.82))
                         .lineLimit(expanded ? nil : 3)
                         .fixedSize(horizontal: false, vertical: true).lineSpacing(3)
                         .textSelection(.enabled)
@@ -922,24 +908,23 @@ struct MemoryView: View {
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.5))
-                    TextField("", text: $search, prompt: Text("Search \(vm.totalSnippets) memories…")
-                        .foregroundColor(.white.opacity(0.4)))
+                        .font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
+                    TextField("Search \(vm.totalSnippets) memories…", text: $search)
                         .textFieldStyle(.plain).font(.system(size: 14))
-                        .foregroundStyle(.white.opacity(0.95))
                     if !search.isEmpty {
                         Button { search = "" } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.white.opacity(0.5))
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                         }.buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 11)
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.white.opacity(0.08))
+                        .fill(Color(red: 0.925, green: 0.935, blue: 0.955))
+                        .shadow(color: Color(red: 0.55, green: 0.58, blue: 0.64).opacity(0.35),
+                                radius: 5, x: 3, y: 3)
+                        .shadow(color: .white.opacity(0.9), radius: 5, x: -3, y: -3)
                 )
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.white.opacity(0.12), lineWidth: 0.8))
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -956,23 +941,22 @@ struct MemoryView: View {
                 }
             }
             .padding(14)
-            .background(Color(red: 0.07, green: 0.08, blue: 0.11).opacity(0.92))
+            .background(Color(red: 0.90, green: 0.91, blue: 0.94).opacity(0.6))
             .overlay(alignment: .bottom) {
-                Rectangle().fill(Color.white.opacity(0.08)).frame(height: 0.5)
+                Rectangle().fill(Color.black.opacity(0.06)).frame(height: 0.5)
             }
 
             if vm.isLoadingMemory {
                 Spacer()
-                ProgressView("Loading memories…")
-                    .foregroundStyle(.white.opacity(0.6)).tint(.white.opacity(0.6))
+                ProgressView("Loading memories…").foregroundStyle(.secondary)
                 Spacer()
             } else if filtered.isEmpty {
                 Spacer()
                 VStack(spacing: 12) {
                     Image(systemName: search.isEmpty ? "cylinder.split.1x2" : "magnifyingglass")
-                        .font(.system(size: 38, weight: .ultraLight)).foregroundStyle(.white.opacity(0.35))
+                        .font(.system(size: 38, weight: .ultraLight)).foregroundStyle(.tertiary)
                     Text(search.isEmpty ? "No memories stored yet" : "No results for \"\(search)\"")
-                        .font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
                 Spacer()
             } else {
@@ -989,13 +973,13 @@ struct MemoryView: View {
                             HStack(spacing: 6) {
                                 Text(day.uppercased())
                                     .font(.system(size: 10.5, weight: .bold))
-                                    .foregroundStyle(.white.opacity(0.7))
+                                    .foregroundStyle(.secondary)
                                     .kerning(0.6)
                                 Text("\(nodes.count)")
                                     .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(.white.opacity(0.55))
+                                    .foregroundStyle(.secondary)
                                     .padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(Capsule().fill(.white.opacity(0.12)))
+                                    .background(Capsule().fill(Color.black.opacity(0.06)))
                             }
                             .padding(.top, 10).padding(.bottom, 2)
                         }
@@ -1004,19 +988,7 @@ struct MemoryView: View {
                 .listStyle(.inset).scrollContentBackground(.hidden)
             }
         }
-        .background {
-            // Dark, deep backdrop so memory cards always read with high contrast
-            LinearGradient(
-                colors: [Color(red: 0.06, green: 0.07, blue: 0.10),
-                         Color(red: 0.09, green: 0.11, blue: 0.14)],
-                startPoint: .topLeading, endPoint: .bottomTrailing)
-            .overlay(
-                RadialGradient(
-                    colors: [Color(red: 0.0, green: 0.55, blue: 0.62).opacity(0.10), .clear],
-                    center: .topTrailing, startRadius: 40, endRadius: 600)
-            )
-            .ignoresSafeArea()
-        }
+        .background(Color.clear)
         .task { await vm.loadMemory() }
     }
 }
@@ -1028,7 +1000,7 @@ private struct MemChip: View {
         Button(action: action) {
             Text(label)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(active ? .white : .white.opacity(0.7))
+                .foregroundStyle(active ? .white : .secondary)
                 .padding(.horizontal, 13).padding(.vertical, 6.5)
                 .background {
                     Capsule().fill(active
@@ -1036,13 +1008,14 @@ private struct MemChip: View {
                             colors: [Color(red: 0.0, green: 0.70, blue: 0.78),
                                      Color(red: 0.0, green: 0.50, blue: 0.60)],
                             startPoint: .leading, endPoint: .trailing))
-                        : AnyShapeStyle(Color.white.opacity(hovered ? 0.14 : 0.08)))
+                        : AnyShapeStyle(Color(red: 0.925, green: 0.935, blue: 0.955).opacity(hovered ? 1.0 : 0.85)))
                     if !active {
-                        Capsule().stroke(.white.opacity(0.12), lineWidth: 0.8)
+                        Capsule().stroke(Color.black.opacity(0.06), lineWidth: 0.8)
                     }
                 }
-                .shadow(color: active ? Color(red: 0.0, green: 0.6, blue: 0.7).opacity(0.4) : .clear,
-                        radius: 6, y: 2)
+                .shadow(color: active ? Color(red: 0.0, green: 0.6, blue: 0.7).opacity(0.35)
+                                      : Color(red: 0.55, green: 0.58, blue: 0.64).opacity(hovered ? 0.0 : 0.25),
+                        radius: active ? 6 : 3, x: active ? 0 : 2, y: 2)
         }
         .buttonStyle(.plain)
         .onHover { h in withAnimation(.easeInOut(duration: 0.15)) { hovered = h } }
@@ -1093,12 +1066,12 @@ private struct MemRow: View {
                     Spacer()
                     (Text(Date(timeIntervalSince1970: node.timestamp), style: .relative) + Text(" ago"))
                         .font(.system(size: 9.5, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.45))
+                        .foregroundStyle(.secondary)
                 }
-                // High-contrast body text — bright on the dark card so it is always legible
-                Text(node.text)
+                // Body text — cleaned for display
+                Text(SynapseViewModel.prettify(node.text))
                     .font(.system(size: 12.5))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(.primary.opacity(0.85))
                     .lineLimit(expanded ? nil : 2)
                     .fixedSize(horizontal: false, vertical: true)
                     .lineSpacing(3)
@@ -1107,7 +1080,7 @@ private struct MemRow: View {
                 HStack(spacing: 8) {
                     Text("#\(node.id)")
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.35))
+                        .foregroundStyle(.tertiary)
                     if node.text.count > 90 {
                         Text(expanded ? "Show less" : "Show more")
                             .font(.system(size: 9, weight: .semibold))
@@ -1123,7 +1096,7 @@ private struct MemRow: View {
                         } label: {
                             Image(systemName: copied ? "checkmark" : "doc.on.doc")
                                 .font(.system(size: 11))
-                                .foregroundStyle(copied ? .green : .white.opacity(0.6))
+                                .foregroundStyle(copied ? .green : .secondary)
                         }
                         .buttonStyle(.plain)
                         Button { Task { await vm.delete(id: node.id) } } label: {
@@ -1141,13 +1114,13 @@ private struct MemRow: View {
         .padding(.horizontal, 12)
         .background {
             ZStack {
-                // Always-on dark glass surface — guarantees text contrast on any bg
+                // Light neumorphic surface
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(red: 0.11, green: 0.13, blue: 0.16).opacity(0.82))
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(.ultraThinMaterial)
-                    )
+                    .fill(Color(red: 0.925, green: 0.935, blue: 0.955))
+                // Soft top-left highlight
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(LinearGradient(colors: [Color.white.opacity(0.5), .clear],
+                                         startPoint: .topLeading, endPoint: .center))
                 // Source-colored left accent rail
                 HStack(spacing: 0) {
                     RoundedRectangle(cornerRadius: 2)
@@ -1158,17 +1131,16 @@ private struct MemRow: View {
                         .padding(.leading, 2)
                     Spacer()
                 }
-                // Specular top highlight (neuromorphic glass)
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [.white.opacity(hovered ? 0.22 : 0.12), .white.opacity(0.02)],
-                            startPoint: .top, endPoint: .bottom),
-                        lineWidth: 0.8)
+                    .stroke(Color.white.opacity(0.7), lineWidth: 0.8)
             }
+            // Neumorphic dual shadow
+            .shadow(color: Color(red: 0.55, green: 0.58, blue: 0.64).opacity(hovered ? 0.5 : 0.32),
+                    radius: hovered ? 16 : 10, x: hovered ? 9 : 6, y: hovered ? 9 : 6)
+            .shadow(color: .white.opacity(hovered ? 0.95 : 0.8),
+                    radius: hovered ? 14 : 9, x: hovered ? -8 : -5, y: hovered ? -8 : -5)
+            .shadow(color: hovered ? tint.opacity(0.18) : .clear, radius: 18, x: 0, y: 5)
         }
-        .shadow(color: hovered ? tint.opacity(0.30) : .black.opacity(0.22),
-                radius: hovered ? 16 : 8, x: 0, y: hovered ? 7 : 3)
         .scaleEffect(hovered ? 1.012 : 1.0)
         .contentShape(Rectangle())
         .onTapGesture {

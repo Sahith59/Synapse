@@ -46,6 +46,46 @@ class SynapseViewModel: ObservableObject {
         let timestamp: Double
     }
 
+    // MARK: - Display text cleanup
+    //
+    // Captured text often carries raw noise: asterisk banners (**** TITLE *****),
+    // bare URLs, repeated punctuation, and collapsed whitespace. This produces a
+    // clean, human-readable string for display without touching what's stored.
+
+    static func prettify(_ raw: String) -> String {
+        var t = raw
+
+        // Drop standalone URL lines (e.g. "URL: https://…") — keep prose, not links
+        t = t.replacingOccurrences(
+            of: #"(?m)^\s*URL:\s*\S+\s*$"#,
+            with: "", options: .regularExpression)
+        t = t.replacingOccurrences(
+            of: #"https?://\S+"#,
+            with: "", options: .regularExpression)
+
+        // Turn asterisk/underscore/equals banners into a clean Title Case heading:
+        // "**** JUSTIFICATION *****" -> "Justification"
+        t = t.replacingOccurrences(
+            of: #"(?m)^[\s*_=\-]*([A-Za-z][A-Za-z0-9 ’'/&-]{1,60}?)[\s*_=\-]*$"#,
+            with: "$1", options: .regularExpression)
+
+        // Strip any leftover runs of *, _, =, ~ used as decoration
+        t = t.replacingOccurrences(
+            of: #"[*_=~]{2,}"#, with: "", options: .regularExpression)
+
+        // Collapse 3+ newlines to a paragraph break, trim trailing spaces per line
+        t = t.replacingOccurrences(
+            of: #"[ \t]+(?=\n)"#, with: "", options: .regularExpression)
+        t = t.replacingOccurrences(
+            of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+
+        // Collapse runs of spaces
+        t = t.replacingOccurrences(
+            of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
+
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: - Source icons
 
     static func sourceIconStatic(_ source: String) -> String {
@@ -131,7 +171,7 @@ class SynapseViewModel: ObservableObject {
             synthesisMs = synthMs
             // Fall back to a clear message rather than a blank card on failure
             if let a = answer, !a.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                ragAnswer = a
+                ragAnswer = SynapseViewModel.prettify(a)
             } else if results.isEmpty {
                 ragAnswer = "I don't have any memories matching that yet."
             } else {

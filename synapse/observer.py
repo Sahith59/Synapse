@@ -400,15 +400,20 @@ def _is_meaningful(text: str) -> bool:
 
 
 def _clean_text(raw: str) -> str:
-    """Normalise whitespace, deduplicate adjacent lines, drop junk short lines."""
+    """Normalise whitespace, strip decorative noise, dedupe lines, drop junk."""
     lines = raw.splitlines()
     seen: set[str] = set()
     cleaned: list[str] = []
     for line in lines:
         line = line.strip()
+        # Strip asterisk/underscore/equals banners: "**** JUSTIFICATION *****"
+        # -> "JUSTIFICATION"; and collapse any leftover decoration runs.
+        line = re.sub(r"^[\s*_=~\-]+|[\s*_=~\-]+$", "", line)
+        line = re.sub(r"[*_=~]{2,}", "", line)
+        line = line.strip()
         if len(line) < 3:
             continue
-        # Skip lines that are clearly UI chrome (single words / numbers)
+        # Skip lines that are clearly UI chrome (single symbols / numbers)
         if len(line) <= 6 and not any(c.isalpha() for c in line):
             continue
         if line in seen:
