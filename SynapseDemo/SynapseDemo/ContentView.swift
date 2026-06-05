@@ -590,7 +590,9 @@ struct SynthesisCard: View {
                         HStack(spacing: 5) {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 12)).foregroundStyle(.green)
-                            Text(String(format: "%.0fms", vm.queryLatencyMs))
+                            Text(vm.synthesisMs >= 1000
+                                 ? String(format: "%.1fs", vm.synthesisMs / 1000)
+                                 : String(format: "%.0fms", vm.synthesisMs))
                                 .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
                         }
                     }
@@ -605,7 +607,7 @@ struct SynthesisCard: View {
                         SkeletonLines()
                         HStack(spacing: 5) {
                             Image(systemName: "cpu.fill").font(.system(size: 9)).foregroundStyle(.secondary)
-                            Text("Phi-3 mini · 4-bit quantized · Apple MLX")
+                            Text("Llama 3.2 3B · 4-bit quantized · Apple MLX")
                                 .font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary)
                         }
                     }
@@ -669,9 +671,11 @@ private struct ResultCard: View {
     @ObservedObject var vm: SynapseViewModel
     @State private var appeared = false
     @State private var hovered  = false
+    @State private var expanded = false
+    @State private var copied   = false
 
     var accent: Color {
-        result.similarity >= 0.80 ? .green : result.similarity >= 0.60 ? .teal : .secondary
+        result.relevance >= 75 ? .green : result.relevance >= 45 ? .teal : .secondary
     }
 
     var body: some View {
@@ -703,24 +707,48 @@ private struct ResultCard: View {
 
                         Spacer()
 
-                        Text(String(format: "%.0f%%", result.similarity * 100))
+                        Text("\(result.relevance)%")
                             .font(.system(size: 15, weight: .bold, design: .rounded))
                             .foregroundStyle(accent)
                     }
 
                     Text(result.text)
                         .font(.system(size: 12)).foregroundStyle(.secondary)
-                        .lineLimit(3).fixedSize(horizontal: false, vertical: true).lineSpacing(3)
+                        .lineLimit(expanded ? nil : 3)
+                        .fixedSize(horizontal: false, vertical: true).lineSpacing(3)
+                        .textSelection(.enabled)
 
                     HStack(spacing: 5) {
                         Text("#\(result.id)").font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary)
                         Text("·").foregroundStyle(.tertiary)
                         (Text(Date(timeIntervalSince1970: result.timestamp), style: .relative) + Text(" ago"))
                             .font(.system(size: 9)).foregroundStyle(.tertiary)
+                        Spacer()
+                        if result.text.count > 140 {
+                            Text(expanded ? "Show less" : "Show more")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.teal)
+                        }
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(result.text, forType: .string)
+                            copied = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+                        } label: {
+                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 10))
+                                .foregroundStyle(copied ? .green : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Copy to clipboard")
                     }
                 }
                 .padding(12)
             }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { expanded.toggle() }
         }
         // Hover lift: stronger shadow + subtle scale
         .shadow(color: hovered ? accent.opacity(0.18) : .clear, radius: 18, x: 0, y: 6)

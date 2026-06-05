@@ -17,8 +17,9 @@ import subprocess
 import time
 
 SOCKET_PATH    = "/tmp/synapse.sock"
-POLL_INTERVAL  = 3.0   # seconds between polls
-MIN_CHARS      = 30    # minimum content length worth storing
+POLL_INTERVAL  = 1.5   # seconds between polls (faster reaction to focus changes)
+MIN_CHARS      = 80    # minimum content length worth storing (filters bare titles)
+MIN_WORDS      = 8     # minimum real words — rejects window-title-only captures
 MAX_CHARS      = 5000  # cap per snapshot
 
 # Apps we never want to capture (system / self)
@@ -383,6 +384,21 @@ def _normalize_source(raw: str) -> str:
     return raw.strip().title() if raw.strip() else "Unknown"
 
 
+def _is_meaningful(text: str) -> bool:
+    """
+    Reject captures that are not worth storing: too short, too few real words,
+    or just a window title (one line of mostly symbols/filenames). This is what
+    keeps editor window-title noise ("file.py — Project") out of the store.
+    """
+    if len(text) < MIN_CHARS:
+        return False
+    # Count words of length >= 2; a real sentence has many, a title bar few
+    words = [w for w in re.findall(r"[A-Za-z']{2,}", text)]
+    if len(words) < MIN_WORDS:
+        return False
+    return True
+
+
 def _clean_text(raw: str) -> str:
     """Normalise whitespace, deduplicate adjacent lines, drop junk short lines."""
     lines = raw.splitlines()
@@ -524,7 +540,7 @@ class Observer:
 
             text = _clean_text(content)[:MAX_CHARS]
 
-            if len(text) < MIN_CHARS or self._is_duplicate(text):
+            if not _is_meaningful(text) or self._is_duplicate(text):
                 time.sleep(POLL_INTERVAL)
                 continue
 

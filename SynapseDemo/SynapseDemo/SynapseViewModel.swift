@@ -11,6 +11,7 @@ class SynapseViewModel: ObservableObject {
     @Published var ragAnswer: String = ""
     @Published var results: [ResultItem] = []
     @Published var queryLatencyMs: Double = 0
+    @Published var synthesisMs: Double = 0
 
     // MARK: - Observer (live context)
 
@@ -34,6 +35,7 @@ class SynapseViewModel: ObservableObject {
         let text: String
         let source: String
         let similarity: Double
+        let relevance: Int       // calibrated 0-100 relevance for display
         let timestamp: Double
     }
 
@@ -115,15 +117,26 @@ class SynapseViewModel: ObservableObject {
             queryLatencyMs = elapsed
             results = hits.map {
                 ResultItem(id: $0.id, text: $0.text, source: $0.source,
-                           similarity: $0.similarity, timestamp: $0.timestamp)
+                           similarity: $0.similarity, relevance: $0.relevance,
+                           timestamp: $0.timestamp)
             }
             isQuerying = false
         }
 
         // RAG synthesis runs separately with a long timeout
+        let synthStart = Date()
         let answer = await rawAsk(query: queryText, topK: 3)
+        let synthMs = Date().timeIntervalSince(synthStart) * 1000
         withAnimation(.easeOut(duration: 0.25)) {
-            ragAnswer = answer ?? ""
+            synthesisMs = synthMs
+            // Fall back to a clear message rather than a blank card on failure
+            if let a = answer, !a.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ragAnswer = a
+            } else if results.isEmpty {
+                ragAnswer = "I don't have any memories matching that yet."
+            } else {
+                ragAnswer = "I found related memories below, but couldn't synthesize a summary."
+            }
             isGenerating = false
         }
     }
@@ -239,11 +252,11 @@ class SynapseViewModel: ObservableObject {
               let tx = lt["text"]      as? String,
               let sr = lt["source"]    as? String,
               let ts = lt["timestamp"] as? Double else { return nil }
-        return ResultItem(id: id, text: tx, source: sr, similarity: 1.0, timestamp: ts)
+        return ResultItem(id: id, text: tx, source: sr, similarity: 1.0, relevance: 100, timestamp: ts)
     }
 
     private func rawQuery(intent: String, topK: Int) async
-        -> [(id: Int, text: String, source: String, similarity: Double, timestamp: Double)]
+        -> [(id: Int, text: String, source: String, similarity: Double, relevance: Int, timestamp: Double)]
     {
         guard let d   = await rawSend(json: ["action": "query", "intent": intent, "top_k": topK]),
               let j   = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
@@ -255,7 +268,8 @@ class SynapseViewModel: ObservableObject {
                   let src = $0["source"]     as? String,
                   let sim = $0["similarity"] as? Double,
                   let ts  = $0["timestamp"]  as? Double else { return nil }
-            return (id, tx, src, sim, ts)
+            let rel = $0["relevance"] as? Int ?? Int(sim * 100)
+            return (id, tx, src, sim, rel, ts)
         }
     }
 

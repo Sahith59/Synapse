@@ -29,7 +29,7 @@ graph LR
         C[SQLite Metadata]
         D[FAISS Vector Index]
         E[MiniLM Embedder · PyTorch]
-        G[Phi-3 RAG · MLX]
+        G[Llama-3.2 RAG · MLX]
     end
 
     O[Screen Observer · AppleScript / Accessibility] -->|captured text| B
@@ -48,7 +48,7 @@ The pieces, and why each one exists:
 
 - **Store.** A FAISS `IndexIDMap` that uses SQLite row IDs as its labels, paired with a SQLite database in WAL mode for the text and metadata. Writes to the index are flushed atomically so a crash can never leave a half-written index on disk.
 
-- **RAG engine.** When you ask a real question rather than just searching, Synapse retrieves the most relevant snippets and feeds them to `Phi-3-mini-4k-instruct-4bit` running through Apple's MLX framework. The model is loaded lazily on the first question so the daemon stays light until you need it.
+- **RAG engine.** When you ask a real question rather than just searching, Synapse retrieves the most relevant snippets and feeds them to `Llama-3.2-3B-Instruct` (4-bit) running through Apple's MLX framework. The model is loaded lazily on the first question so the daemon stays light until you need it, and answers are constrained to the retrieved context so they stay grounded.
 
 - **Server.** A small Unix-domain-socket server that speaks newline-delimited JSON. Each connection is handled on its own thread, and the accept loop is written so it never blocks indefinitely.
 

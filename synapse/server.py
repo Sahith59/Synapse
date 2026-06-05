@@ -46,6 +46,24 @@ SOCKET_PATH = "/tmp/synapse.sock"
 MAX_MSG_BYTES = 65_536      # 64 KB
 BACKLOG = 32                # max pending connections
 
+# all-MiniLM-L6-v2 cosine scores are compressed: a strong match sits around
+# 0.45-0.6, a usable one around 0.30, and noise below ~0.20. We hide hits under
+# the floor, and map the useful band onto a human-readable 0-100 relevance so
+# the UI doesn't show a genuinely good match as "25%".
+MIN_RELEVANCE = 0.20        # below this, a hit is not shown at all
+_REL_LOW  = 0.20            # maps to ~5%
+_REL_HIGH = 0.62            # maps to ~99%
+
+
+def _calibrate_relevance(cosine: float) -> int:
+    """Map a raw cosine similarity onto a 0-100 relevance percentage."""
+    if cosine <= _REL_LOW:
+        return 5
+    if cosine >= _REL_HIGH:
+        return 99
+    frac = (cosine - _REL_LOW) / (_REL_HIGH - _REL_LOW)
+    return int(round(5 + frac * 94))
+
 
 class SynapseServer:
     def __init__(self, embedder_fn, store):
@@ -165,6 +183,8 @@ class SynapseServer:
                 return {"ok": False, "error": "intent is required for query"}
             result = self._embed(intent)
             hits   = self._store.search(result.vector, top_k=top_k)
+            # Drop matches below the relevance floor so weak/noise hits don't show
+            hits = [h for h in hits if h.similarity >= MIN_RELEVANCE]
             return {
                 "ok": True,
                 "results": [
@@ -173,6 +193,7 @@ class SynapseServer:
                         "text":       h.text,
                         "source":     h.source,
                         "similarity": round(h.similarity, 4),
+                        "relevance":  _calibrate_relevance(h.similarity),
                         "timestamp":  h.timestamp,
                     }
                     for h in hits
