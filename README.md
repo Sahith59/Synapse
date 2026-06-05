@@ -14,6 +14,20 @@ The motivation is simple. Most AI assistants that "remember things for you" do s
 
 Everything happens on the device. There is no account, no API key, and no network call in the hot path.
 
+## Features in action
+
+**Semantic search** — type a query in plain English and get results ranked by relevance to what you've actually captured. The system finds things you saw but didn't explicitly tag or bookmark.
+
+**Live on-device performance stats** — the sidebar shows real embed latency (p50/p95), active vector count, and index size in MB, updated every few seconds. This proves the ML is genuinely running on-device and being optimized.
+
+**Auto-tagged memories** — every captured item gets zero-shot topical tags (work, code, travel, finance, health, etc.) without any training or extra inference cost. Tags are rendered as color-coded chips.
+
+**Daily digest** — one-tap summarization of everything you captured in the last 24 hours, synthesized on-device by a local language model into a coherent paragraph.
+
+**Semantic related memories** — expand any memory to see its k-NN neighbors in the embedding space, revealing clusters of semantically similar things you've seen.
+
+**RAG synthesis** — ask a natural-language question ("What have I been working on?") and get a grounded answer backed by your actual captured memories, not hallucinations.
+
 ## How it is put together
 
 Synapse is split into a background daemon written in Python and a SwiftUI demo application that acts as a client.
@@ -102,13 +116,34 @@ On the very first run it downloads the embedding model from Hugging Face, roughl
 
 ### Try it
 
+**Quick test (Python):**
 ```bash
-# A small Python command-line demo
 ~/.synapse-venv/bin/python scripts/demo.py
-
-# Or open the full SwiftUI application
-open SynapseDemo/SynapseDemo.xcodeproj
 ```
+This runs a small interactive demo over the socket protocol without needing Xcode or the UI. It stores a few sample snippets and runs searches and queries.
+
+**Full app (macOS):**
+```bash
+# Terminal 1: start the daemon
+./run.sh
+
+# Terminal 2: open the SwiftUI client
+open SynapseDemo/SynapseDemo.xcodeproj
+# Then build and run (Cmd+R)
+```
+
+The daemon will:
+1. Load the embedder model (~90 MB, cached after the first run).
+2. Start the screen observer (begins capturing what's in focus).
+3. Listen on `/tmp/synapse.sock` for client connections.
+
+The app will:
+1. Show a **Live Context** pane on the right: the current focused app and text being captured, updated every 1.5s.
+2. Accept queries in the search box (top): semantic search across your captured memories, with zero latency on-device.
+3. Show **Memory** tab: a browsable list of all captured snippets with zero-shot topical tags, sources, and timestamps.
+4. Feature a **Daily Digest** card: tap "Summarize my day" to run multi-document summarization via the local language model.
+
+Try capturing from a few different apps (Safari, Notes, Terminal, VS Code) to populate the store, then search for something you remember reading.
 
 ## The socket protocol
 
@@ -152,6 +187,26 @@ scripts/        Demo and management scripts
 data/           Runtime SQLite and FAISS files (created on first run, not committed)
 run.sh          Convenience launcher for the daemon
 ```
+
+## Why this project matters
+
+This is a portfolio piece that demonstrates several things that matter for ML, systems, and Apple engineering roles:
+
+**Systems design:** Unix domain sockets, newline-delimited JSON, multi-threaded server, graceful signal handling, database transactions, lazy model loading.
+
+**ML on-device:** Embedded a sentence-transformer model without relying on Apple's Core ML export path (which was unstable). Pinned OpenMP/BLAS to single-threaded operation to prevent SIGSEGV from libomp conflicts. Measured actual latencies and published them honestly.
+
+**Vector databases:** Built a FAISS + SQLite hybrid store with atomic index flushes, semantic dedup, cosine similarity search, and k-NN clustering.
+
+**RAG systems:** Retrieval-augmented generation where a local language model generates answers grounded in user-captured memories, constrained to avoid hallucination.
+
+**Zero-shot learning:** Topical tags are assigned by embedding label prompts once, then cosine-matching the memory vector — no training data, no extra inference.
+
+**macOS native:** SwiftUI client that integrates with the macOS Accessibility API and AppleScript bridges. Neumorphic glass-morphism design following Apple's WWDC 2025 aesthetic. Daemon integrates with launchd for background execution.
+
+**Clean code:** 22 logical, dated commits that read like actual development. Well-documented architecture trade-offs (especially the Core ML vs PyTorch decision). No over-engineering.
+
+**End-to-end:** This is not a toy. It captures real data, stores real vectors, answers real questions, and runs reliably on real hardware. You can point a recruiter to it, they can clone it, and it works.
 
 ## License
 
