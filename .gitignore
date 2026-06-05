@@ -48,3 +48,6 @@ data/*.bak
 
 # iCloud duplicate files ("foo 2.ext")
 * 2.*
+
+# Screenshots (local reference only, not committed)
+Screenshots/

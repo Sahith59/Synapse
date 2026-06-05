@@ -28,21 +28,53 @@ Everything happens on the device. There is no account, no API key, and no networ
 
 **RAG synthesis** — ask a natural-language question ("What have I been working on?") and get a grounded answer backed by your actual captured memories, not hallucinations.
 
-## Visual demo
+## Visual walkthrough
 
-The app runs on Apple Silicon macOS in a native SwiftUI interface with a light neumorphic glass design (WWDC 2025 aesthetic).
+The app is built with SwiftUI on Apple Silicon macOS, using a light neumorphic glass design. Here's what you see when you run it:
 
-**Main query pane:** Type a question or search term. Results appear instantly with relevance scores, source app, and zero-shot topical tags (colored chips). The right panel shows live context — what's currently in focus across your applications, updated every 1.5 seconds.
+### Main interface — semantic search in action
 
-![Query and search results](docs/screenshots/01_query_pane.png)
+![Main query pane with live context](Screenshots/01_main_interface.png)
 
-**Memory tab:** Browse all captured memories chronologically. Each item shows the source app (Safari, Notes, VS Code, etc.), capture time, auto-assigned tags, and snippet preview. Hover to expand or delete. Tap any memory to see its k-NN semantic neighbors (related memories in the embedding space).
+The left sidebar shows:
+- **Memory count** (344 captured snippets, updating live)
+- **Intelligence section** with toggles for the query modes
+- **Live performance stats** showing p50 embed latency, vector count, and index size — real measurements proving the ML runs on-device
 
-![Memory list with tags and related memories](docs/screenshots/02_results_view.png)
+The center pane is where you type queries. Results appear instantly with:
+- **Relevance scores** (the colored bar, 0–100)
+- **Source app** (where you captured it)
+- **Topical tags** (work, code, travel, etc. — zero-shot classified)
+- **Preview text** of what was captured
 
-**Live stats strip (left sidebar):** Shows real-time performance metrics — p50/p95 embed latency in milliseconds, active memory count, and on-disk FAISS index size. This proves the ML is running locally and being optimized.
+The right pane shows **Live Context** — what's currently in focus across your apps, updated every 1.5 seconds. This gives you immediate visual feedback that capture is working.
 
-**Daily digest card:** Tap "Summarize my day" to feed all of today's memories to the local language model and get back a paragraph-long narrative of what you focused on.
+### Memory browser — k-NN semantic neighbors
+
+![Memory list with related memories](Screenshots/02_memory_list.png)
+
+Switch to the **Memory** tab to browse all your captured memories chronologically. Each row shows:
+- **Source** (Chrome, Notes, VS Code, Safari, etc.)
+- **Timestamp** (when you captured it)
+- **Topical tags** (color-coded: work, code, research, shopping, travel, finance, etc.)
+- **Preview** of the actual captured text
+
+Tap any memory to expand it and see:
+- **Related memories** (the k-NN neighbors in the embedding space)
+- **Similarity scores** showing how semantically close each neighbor is
+- Full text of both the memory and its neighbors
+
+This feature reveals clusters of semantically related things you've seen — useful for finding connections you didn't consciously make.
+
+### Daily digest — on-device LLM summarization
+
+![Daily digest with multi-document summary](Screenshots/03_daily_digest.png)
+
+The **Daily Digest** card appears on the main pane. Tap "Summarize my day" to:
+1. Feed all of today's memories (up to 40 of the most recent) to the local Llama-3.2 language model
+2. Get back a coherent paragraph summarizing what you focused on
+
+In this example, the digest reads: *"It looks like you had a busy day exploring and learning about various opportunities and projects related to AI and ML engineering..."* — fully generated on-device, grounded in real captured memories, no hallucinations.
 
 ## How it is put together
 
