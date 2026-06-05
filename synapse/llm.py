@@ -58,14 +58,19 @@ class RAGEngine:
         )
 
         system_msg = (
-            "You are Synapse, a personal memory assistant running on the user's Mac. "
-            "You answer questions using ONLY the memory snippets provided to you. "
-            "Write a direct, natural-language answer in one or two short sentences. "
-            "Do not list the snippets verbatim, do not invent details, and if the "
-            "snippets do not contain the answer, say you don't have a memory of that."
+            "You are Synapse, a personal memory assistant on the user's Mac. "
+            "Each memory snippet is something the user actually saw or did on their "
+            "computer: a web page they visited, a search they ran, a note they wrote, "
+            "an email they read. Treat the snippets as factual evidence of the user's "
+            "activity. For example, a captured Google search result for 'X' means the "
+            "user did search for X.\n\n"
+            "Answer the user's question directly in one or two natural sentences, based "
+            "on the snippets. Reference what the snippet shows (the page, the search, "
+            "the note). Do not dump the raw snippet or URL. Only say you have no memory "
+            "of something if none of the snippets are relevant to the question."
         )
         user_msg = (
-            f"Here are my relevant memories:\n{context_block}\n\n"
+            f"My captured memories:\n{context_block}\n\n"
             f"Question: {query}"
         )
 

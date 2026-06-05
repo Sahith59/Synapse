@@ -803,19 +803,24 @@ struct MemoryView: View {
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-                    TextField("Search \(vm.totalSnippets) memories…", text: $search)
+                        .font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+                    TextField("", text: $search, prompt: Text("Search \(vm.totalSnippets) memories…")
+                        .foregroundColor(.white.opacity(0.4)))
                         .textFieldStyle(.plain).font(.system(size: 14))
+                        .foregroundStyle(.white.opacity(0.95))
                     if !search.isEmpty {
                         Button { search = "" } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.white.opacity(0.5))
                         }.buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .background(.regularMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.5), lineWidth: 0.5))
+                .padding(.horizontal, 14).padding(.vertical, 11)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                )
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.white.opacity(0.12), lineWidth: 0.8))
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -832,22 +837,23 @@ struct MemoryView: View {
                 }
             }
             .padding(14)
-            .background(.regularMaterial)
+            .background(Color(red: 0.07, green: 0.08, blue: 0.11).opacity(0.92))
             .overlay(alignment: .bottom) {
-                Rectangle().fill(Color.primary.opacity(0.06)).frame(height: 0.5)
+                Rectangle().fill(Color.white.opacity(0.08)).frame(height: 0.5)
             }
 
             if vm.isLoadingMemory {
                 Spacer()
-                ProgressView("Loading memories…").foregroundStyle(.secondary)
+                ProgressView("Loading memories…")
+                    .foregroundStyle(.white.opacity(0.6)).tint(.white.opacity(0.6))
                 Spacer()
             } else if filtered.isEmpty {
                 Spacer()
                 VStack(spacing: 12) {
                     Image(systemName: search.isEmpty ? "cylinder.split.1x2" : "magnifyingglass")
-                        .font(.system(size: 38, weight: .ultraLight)).foregroundStyle(.tertiary)
+                        .font(.system(size: 38, weight: .ultraLight)).foregroundStyle(.white.opacity(0.35))
                     Text(search.isEmpty ? "No memories stored yet" : "No results for \"\(search)\"")
-                        .font(.system(size: 13)).foregroundStyle(.secondary)
+                        .font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
                 }
                 Spacer()
             } else {
@@ -861,41 +867,66 @@ struct MemoryView: View {
                                     .listRowBackground(Color.clear)
                             }
                         } header: {
-                            HStack(spacing: 5) {
-                                Text(day).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                                Text("· \(nodes.count)").font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary)
-                            }.padding(.top, 8)
+                            HStack(spacing: 6) {
+                                Text(day.uppercased())
+                                    .font(.system(size: 10.5, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.7))
+                                    .kerning(0.6)
+                                Text("\(nodes.count)")
+                                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.55))
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Capsule().fill(.white.opacity(0.12)))
+                            }
+                            .padding(.top, 10).padding(.bottom, 2)
                         }
                     }
                 }
                 .listStyle(.inset).scrollContentBackground(.hidden)
             }
         }
-        .background(.clear)
+        .background {
+            // Dark, deep backdrop so memory cards always read with high contrast
+            LinearGradient(
+                colors: [Color(red: 0.06, green: 0.07, blue: 0.10),
+                         Color(red: 0.09, green: 0.11, blue: 0.14)],
+                startPoint: .topLeading, endPoint: .bottomTrailing)
+            .overlay(
+                RadialGradient(
+                    colors: [Color(red: 0.0, green: 0.55, blue: 0.62).opacity(0.10), .clear],
+                    center: .topTrailing, startRadius: 40, endRadius: 600)
+            )
+            .ignoresSafeArea()
+        }
         .task { await vm.loadMemory() }
     }
 }
 
 private struct MemChip: View {
     let label: String; let active: Bool; let action: () -> Void
+    @State private var hovered = false
     var body: some View {
         Button(action: action) {
             Text(label)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(active ? .white : .secondary)
-                .padding(.horizontal, 12).padding(.vertical, 6)
+                .foregroundStyle(active ? .white : .white.opacity(0.7))
+                .padding(.horizontal, 13).padding(.vertical, 6.5)
                 .background {
                     Capsule().fill(active
                         ? AnyShapeStyle(LinearGradient(
-                            colors: [Color(red: 0.0, green: 0.68, blue: 0.75),
-                                     Color(red: 0.0, green: 0.48, blue: 0.58)],
+                            colors: [Color(red: 0.0, green: 0.70, blue: 0.78),
+                                     Color(red: 0.0, green: 0.50, blue: 0.60)],
                             startPoint: .leading, endPoint: .trailing))
-                        : AnyShapeStyle(Material.regularMaterial))
+                        : AnyShapeStyle(Color.white.opacity(hovered ? 0.14 : 0.08)))
                     if !active {
-                        Capsule().stroke(.white.opacity(0.5), lineWidth: 0.5)
+                        Capsule().stroke(.white.opacity(0.12), lineWidth: 0.8)
                     }
                 }
-        }.buttonStyle(.plain)
+                .shadow(color: active ? Color(red: 0.0, green: 0.6, blue: 0.7).opacity(0.4) : .clear,
+                        radius: 6, y: 2)
+        }
+        .buttonStyle(.plain)
+        .onHover { h in withAnimation(.easeInOut(duration: 0.15)) { hovered = h } }
     }
 }
 
@@ -905,62 +936,133 @@ private struct MemRow: View {
     var index: Int = 0
     @State private var hovered  = false
     @State private var appeared = false
+    @State private var expanded = false
+    @State private var copied   = false
 
     var tint: Color {
         switch node.source.lowercased() {
-        case "safari", "chrome":        return .blue
-        case "notes", "pages":          return .orange
-        case "terminal", "xcode", "code": return .green
-        case "mail":                    return Color(red: 0.5, green: 0.2, blue: 0.8)
-        default:                        return .teal
+        case "safari", "chrome", "arc":          return Color(red: 0.30, green: 0.62, blue: 1.0)
+        case "notes", "pages":                   return Color(red: 1.0, green: 0.62, blue: 0.18)
+        case "terminal", "xcode", "vs code", "code", "cursor":
+                                                 return Color(red: 0.30, green: 0.85, blue: 0.55)
+        case "mail":                             return Color(red: 0.62, green: 0.40, blue: 1.0)
+        default:                                 return Color(red: 0.20, green: 0.80, blue: 0.80)
         }
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 12) {
+            // Source icon tile
             ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(tint.opacity(0.12)).frame(width: 32, height: 32)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(tint.opacity(0.22))
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(tint.opacity(0.35), lineWidth: 0.5)
+                    )
                 Image(systemName: SynapseViewModel.sourceIconStatic(node.source))
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(LinearGradient(colors: [tint, tint.opacity(0.7)],
-                                                   startPoint: .top, endPoint: .bottom))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(tint)
             }
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text(node.source).font(.system(size: 11, weight: .semibold)).foregroundStyle(tint)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(node.source)
+                        .font(.system(size: 11.5, weight: .bold))
+                        .foregroundStyle(tint)
                     Spacer()
                     (Text(Date(timeIntervalSince1970: node.timestamp), style: .relative) + Text(" ago"))
-                        .font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary)
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.45))
                 }
-                Text(node.text).font(.system(size: 12)).foregroundStyle(.primary)
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true).lineSpacing(2.5)
-                Text("#\(node.id)").font(.system(size: 9, design: .monospaced)).foregroundStyle(.quaternary)
-            }
-            if hovered {
-                Button { Task { await vm.delete(id: node.id) } } label: {
-                    Image(systemName: "trash").font(.system(size: 12)).foregroundStyle(.red.opacity(0.7))
+                // High-contrast body text — bright on the dark card so it is always legible
+                Text(node.text)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(expanded ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+
+                HStack(spacing: 8) {
+                    Text("#\(node.id)")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.35))
+                    if node.text.count > 90 {
+                        Text(expanded ? "Show less" : "Show more")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(tint)
+                    }
+                    Spacer()
+                    if hovered {
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(node.text, forType: .string)
+                            copied = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+                        } label: {
+                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 11))
+                                .foregroundStyle(copied ? .green : .white.opacity(0.6))
+                        }
+                        .buttonStyle(.plain)
+                        Button { Task { await vm.delete(id: node.id) } } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.red.opacity(0.8))
+                        }
+                        .buttonStyle(.plain)
+                        .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    }
                 }
-                .buttonStyle(.plain)
-                .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
-        .padding(10)
+        .padding(.vertical, 11)
+        .padding(.horizontal, 12)
         .background {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(hovered ? AnyShapeStyle(Material.regularMaterial) : AnyShapeStyle(Color.clear))
-            if hovered {
-                RoundedRectangle(cornerRadius: 12).stroke(.white.opacity(0.5), lineWidth: 0.5)
+            ZStack {
+                // Always-on dark glass surface — guarantees text contrast on any bg
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color(red: 0.11, green: 0.13, blue: 0.16).opacity(0.82))
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                    )
+                // Source-colored left accent rail
+                HStack(spacing: 0) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(LinearGradient(colors: [tint, tint.opacity(0.4)],
+                                             startPoint: .top, endPoint: .bottom))
+                        .frame(width: 3)
+                        .padding(.vertical, 10)
+                        .padding(.leading, 2)
+                    Spacer()
+                }
+                // Specular top highlight (neuromorphic glass)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [.white.opacity(hovered ? 0.22 : 0.12), .white.opacity(0.02)],
+                            startPoint: .top, endPoint: .bottom),
+                        lineWidth: 0.8)
             }
         }
-        .shadow(color: hovered ? tint.opacity(0.15) : .clear, radius: 12, x: 0, y: 4)
-        .shadow(color: hovered ? .black.opacity(0.08) : .clear, radius: 4, x: 0, y: 1)
-        .scaleEffect(hovered ? 1.008 : 1.0)
+        .shadow(color: hovered ? tint.opacity(0.30) : .black.opacity(0.22),
+                radius: hovered ? 16 : 8, x: 0, y: hovered ? 7 : 3)
+        .scaleEffect(hovered ? 1.012 : 1.0)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if node.text.count > 90 {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { expanded.toggle() }
+            }
+        }
         .onHover { h in withAnimation(.spring(response: 0.22, dampingFraction: 0.7)) { hovered = h } }
-        .opacity(appeared ? 1 : 0).offset(y: appeared ? 0 : 8)
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 10)
         .onAppear {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.82)
-                .delay(min(Double(index) * 0.02, 0.3))) { appeared = true }
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)
+                .delay(min(Double(index) * 0.035, 0.4))) { appeared = true }
         }
     }
 }
