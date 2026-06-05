@@ -28,6 +28,22 @@ Everything happens on the device. There is no account, no API key, and no networ
 
 **RAG synthesis** — ask a natural-language question ("What have I been working on?") and get a grounded answer backed by your actual captured memories, not hallucinations.
 
+## Visual demo
+
+The app runs on Apple Silicon macOS in a native SwiftUI interface with a light neumorphic glass design (WWDC 2025 aesthetic).
+
+**Main query pane:** Type a question or search term. Results appear instantly with relevance scores, source app, and zero-shot topical tags (colored chips). The right panel shows live context — what's currently in focus across your applications, updated every 1.5 seconds.
+
+![Query and search results](docs/screenshots/01_query_pane.png)
+
+**Memory tab:** Browse all captured memories chronologically. Each item shows the source app (Safari, Notes, VS Code, etc.), capture time, auto-assigned tags, and snippet preview. Hover to expand or delete. Tap any memory to see its k-NN semantic neighbors (related memories in the embedding space).
+
+![Memory list with tags and related memories](docs/screenshots/02_results_view.png)
+
+**Live stats strip (left sidebar):** Shows real-time performance metrics — p50/p95 embed latency in milliseconds, active memory count, and on-disk FAISS index size. This proves the ML is running locally and being optimized.
+
+**Daily digest card:** Tap "Summarize my day" to feed all of today's memories to the local language model and get back a paragraph-long narrative of what you focused on.
+
 ## How it is put together
 
 Synapse is split into a background daemon written in Python and a SwiftUI demo application that acts as a client.
